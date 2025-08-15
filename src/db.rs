@@ -53,6 +53,7 @@ pub trait UserExt {
     async fn update_user_role(
         &self,
         user_id: Uuid,
+        target_id: Uuid,
         role: UserRole,
     ) -> Result<User, sqlx::Error>;
 
@@ -197,7 +198,8 @@ impl UserExt for DBClient {
 
     async fn update_user_role(
         &self,
-        user_id: Uuid,
+        requester_id: Uuid,
+        target_id: Uuid,
         new_role: UserRole
     ) -> Result<User, sqlx::Error> {
         let user = sqlx::query_as!(
@@ -209,7 +211,7 @@ impl UserExt for DBClient {
             RETURNING id, name, email, password, verified, created_at, updated_at, verification_token, token_expires_at, role as "role: UserRole"
             "#,
             new_role as UserRole,
-            user_id
+            target_id
         ).fetch_one(&self.pool)
        .await?;
 

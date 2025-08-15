@@ -3,6 +3,7 @@ use core::str;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use validator::Validate;
+use uuid::Uuid;
 
 use crate::models::{User, UserRole};
 
@@ -119,6 +120,7 @@ pub struct NameUpdateDto {
 pub struct RoleUpdateDto {
     #[validate(custom = "validate_user_role")]
     pub role: UserRole,
+    pub target_user_id: Uuid, 
 }
 
 fn validate_user_role(role: &UserRole) -> Result<(), validator::ValidationError> {

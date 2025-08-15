@@ -4,6 +4,8 @@ use std::sync::Arc;
 use axum::{extract::Query, middleware, response::IntoResponse, routing::{get, put}, Extension, Json, Router};
 use validator::Validate;
 
+
+
 use crate::{db::UserExt, dtos::{FilterUserDto, NameUpdateDto, RequestQueryDto, Response, RoleUpdateDto, UserData, UserListResponseDto, UserPasswordUpdateDto, UserResponseDto}, error::{ErrorMessage, HttpError}, middleware::{role_check, JWTAuthMiddeware}, models::UserRole, utils::password, AppState};
 
 
@@ -107,31 +109,35 @@ pub async fn update_user_name(
 
 pub async fn update_user_role(
     Extension(app_state): Extension<Arc<AppState>>,
-    Extension(user): Extension<JWTAuthMiddeware>,
+    Extension(auth_user): Extension<JWTAuthMiddeware>,  // Renamed for clarity
     Json(body): Json<RoleUpdateDto>,
 ) -> Result<impl IntoResponse, HttpError> {
+    // Validate input
     body.validate()
         .map_err(|e| HttpError::bad_request(e.to_string()))?;
 
-    let user = &user.user;
+    // Verify requesting user is admin
+    if auth_user.user.role != UserRole::Admin {
+        return Err(HttpError::unauthorized("Only Admins can update roles"));
+    }
 
-    let user_id = uuid::Uuid::parse_str(&user.id.to_string()).unwrap();
+    // Prevent self-demotion
+    if auth_user.user.id == body.target_user_id && body.role != UserRole::Admin {
+        return Err(HttpError::unauthorized("Admins cannot remove their own admin status"));
+    }
 
-    let result = app_state.db_client
-        .update_user_role(user_id.clone(), body.role)
+    // Update target user
+    let updated_user = app_state.db_client
+        .update_user_role(auth_user.user.id, body.target_user_id, body.role)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let filtered_user = FilterUserDto::filter_user(&result);
-
-    let response = UserResponseDto {
-        data: UserData {
-            user: filtered_user,
-        },
+    Ok(Json(UserResponseDto {
         status: "success".to_string(),
-    };
-
-    Ok(Json(response))
+        data: UserData {
+            user: FilterUserDto::filter_user(&updated_user),
+        },
+    }))
 }
 
 pub async fn update_user_password(
