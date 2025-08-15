@@ -8,7 +8,7 @@ pub async fn send_verification_email(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let subject = "Email Verification";
     let template_path = "src/mail/templates/Verification-email.html";
-    let base_url = "http://localhost:8000/api/auth/verify";
+    let base_url = "verinest.up.railway.app/api/auth/verify";
     let verification_link = create_verification_link(base_url, token);
     let placeholders = vec![
         ("{{username}}".to_string(), username.to_string()),
