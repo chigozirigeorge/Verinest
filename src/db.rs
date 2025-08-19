@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{Pool, Postgres};
 use uuid::Uuid;
 
-use crate::models::{User, UserRole};
+use crate::models::usermodel::{User, UserRole, VerificationType}; 
 
 #[derive(Debug, Clone)]
 pub struct DBClient {
@@ -22,7 +22,7 @@ pub trait UserExt {
     async fn get_user(
         &self,
         user_id: Option<Uuid>,
-        name: Option<&str>,
+        username: Option<&str>,
         email: Option<&str>,
         token: Option<&str>,
     ) -> Result<Option<User>, sqlx::Error>;
@@ -36,6 +36,7 @@ pub trait UserExt {
     async fn save_user<T: Into<String> + Send>(
         &self,
         name: T,
+        username: T,
         email: T,
         password: T,
         verification_token: T,
@@ -52,7 +53,6 @@ pub trait UserExt {
 
     async fn update_user_role(
         &self,
-        user_id: Uuid,
         target_id: Uuid,
         role: UserRole,
     ) -> Result<User, sqlx::Error>;
@@ -74,6 +74,17 @@ pub trait UserExt {
         token: &str,
         expires_at: DateTime<Utc>,
     ) -> Result<(), sqlx::Error>;
+
+    async fn update_trust_point(
+        &self,
+        user_id: Uuid,
+        score_to_add: i32
+    ) -> Result<User, sqlx::Error>;
+
+    async fn get_users_by_trustscore(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<User>, sqlx::Error>;
 }
 
 #[async_trait]
@@ -81,7 +92,7 @@ impl UserExt for DBClient {
     async fn get_user(
         &self,
         user_id: Option<Uuid>,
-        name: Option<&str>,
+        username: Option<&str>,
         email: Option<&str>,
         token: Option<&str>,
     ) -> Result<Option<User>, sqlx::Error> {
@@ -90,27 +101,67 @@ impl UserExt for DBClient {
         if let Some(user_id) = user_id {
             user = sqlx::query_as!(
                 User,
-                r#"SELECT id, name, email, password, verified, created_at, updated_at, verification_token, token_expires_at, role as "role: UserRole" FROM users WHERE id = $1"#,
+               r#"
+        SELECT 
+            id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
+        FROM users
+         WHERE id = $1"#,
                 user_id
             ).fetch_optional(&self.pool).await?;
-        } else if let Some(name) = name {
+        } else if let Some(username) = username {
             user = sqlx::query_as!(
                 User,
-                r#"SELECT id, name, email, password, verified, created_at, updated_at, verification_token, token_expires_at, role as "role: UserRole" FROM users WHERE name = $1"#,
-                name
+                r#"SELECT 
+            id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
+        FROM users 
+        WHERE username = $1
+        "#,
+                username
             ).fetch_optional(&self.pool).await?;
         } else if let Some(email) = email {
             user = sqlx::query_as!(
                 User,
-                r#"SELECT id, name, email, password, verified, created_at, updated_at, verification_token, token_expires_at, role as "role: UserRole" FROM users WHERE email = $1"#,
+                r#"SELECT 
+            id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
+        FROM users
+         WHERE email = $1"#,
                 email
             ).fetch_optional(&self.pool).await?;
         } else if let Some(token) = token {
             user = sqlx::query_as!(
                 User,
                 r#"
-                SELECT id, name, email, password, verified, created_at, updated_at, verification_token, token_expires_at, role as "role: UserRole" 
-                FROM users 
+                SELECT 
+            id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
+        FROM users 
                 WHERE verification_token = $1"#,
                 token
             )
@@ -130,7 +181,16 @@ impl UserExt for DBClient {
 
         let users = sqlx::query_as!(
             User,
-            r#"SELECT id, name, email, password, verified, created_at, updated_at, verification_token, token_expires_at, role as "role: UserRole" FROM users 
+            r#"SELECT 
+            id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
+        FROM users
             ORDER BY created_at DESC LIMIT $1 OFFSET $2"#,
             limit as i64,
             offset as i64,
@@ -143,6 +203,7 @@ impl UserExt for DBClient {
     async fn save_user<T: Into<String> + Send>(
         &self,
         name: T,
+        username: T,
         email: T,
         password: T,
         verification_token: T,
@@ -151,11 +212,19 @@ impl UserExt for DBClient {
         let user = sqlx::query_as!(
             User,
             r#"
-            INSERT INTO users (name, email, password,verification_token, token_expires_at) 
-            VALUES ($1, $2, $3, $4, $5) 
-            RETURNING id, name, email, password, verified, created_at, updated_at, verification_token, token_expires_at, role as "role: UserRole"
+            INSERT INTO users (name, username, email, password, verification_token, token_expires_at) 
+            VALUES ($1, $2, $3, $4, $5, $6) 
+            RETURNING id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
             "#,
             name.into(),
+            username.into(),
             email.into(),
             password.into(),
             verification_token.into(),
@@ -184,9 +253,16 @@ impl UserExt for DBClient {
             User,
             r#"
             UPDATE users
-            SET name = $1, updated_at = Now()
+            SET name = $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, email, password, verified, created_at, updated_at, verification_token, token_expires_at, role as "role: UserRole"
+            RETURNING id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
             "#,
             new_name.into(),
             user_id
@@ -198,7 +274,6 @@ impl UserExt for DBClient {
 
     async fn update_user_role(
         &self,
-        requester_id: Uuid,
         target_id: Uuid,
         new_role: UserRole
     ) -> Result<User, sqlx::Error> {
@@ -206,9 +281,16 @@ impl UserExt for DBClient {
             User,
             r#"
             UPDATE users
-            SET role = $1, updated_at = Now()
+            SET role = $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, email, password, verified, created_at, updated_at, verification_token, token_expires_at, role as "role: UserRole"
+            RETURNING id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
             "#,
             new_role as UserRole,
             target_id
@@ -227,9 +309,16 @@ impl UserExt for DBClient {
             User,
             r#"
             UPDATE users
-            SET password = $1, updated_at = Now()
+            SET password = $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, email, password, verified, created_at, updated_at, verification_token, token_expires_at, role as "role: UserRole"
+            RETURNING id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
             "#,
             new_password,
             user_id
@@ -243,18 +332,18 @@ impl UserExt for DBClient {
         &self,
         token: &str,
     ) -> Result<(), sqlx::Error> {
-        let _ =sqlx::query!(
+        sqlx::query!(
             r#"
             UPDATE users
             SET verified = true, 
-                updated_at = Now(),
+                updated_at = NOW(),
                 verification_token = NULL,
                 token_expires_at = NULL
             WHERE verification_token = $1
             "#,
             token
         ).execute(&self.pool)
-       .await;
+       .await?;
 
         Ok(())
     }
@@ -265,10 +354,10 @@ impl UserExt for DBClient {
         token: &str,
         token_expires_at: DateTime<Utc>,
     ) -> Result<(), sqlx::Error> {
-        let _ = sqlx::query!(
+        sqlx::query!(
             r#"
             UPDATE users
-            SET verification_token = $1, token_expires_at = $2, updated_at = Now()
+            SET verification_token = $1, token_expires_at = $2, updated_at = NOW()
             WHERE id = $3
             "#,
             token,
@@ -278,5 +367,59 @@ impl UserExt for DBClient {
        .await?;
 
         Ok(())
+    }
+
+    async fn update_trust_point(
+        &self,
+        user_id: Uuid,
+        score_to_add: i32,
+    ) -> Result<User, sqlx::Error> {
+        let user = sqlx::query_as!(
+            User,
+            r#"
+            UPDATE users
+            SET trust_score = trust_score + $1, updated_at = NOW()
+            WHERE id = $2
+            RETURNING id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
+            "#,
+            score_to_add,
+            user_id
+        ).fetch_one(&self.pool)
+        .await?;
+
+        Ok(user)
+    }
+
+    async fn get_users_by_trustscore(
+        &self,
+        limit: i64
+    ) -> Result<Vec<User>, sqlx::Error> {
+        let users = sqlx::query_as!(
+            User,
+            r#"
+            SELECT id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            verification_number, wallet_address, nationality,
+            dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
+            FROM users 
+            ORDER BY trust_score DESC 
+            LIMIT $1
+            "#,
+            limit
+        ).fetch_all(&self.pool)
+        .await?;
+
+        Ok(users)
     }
 }

@@ -6,7 +6,7 @@ use validator::Validate;
 
 
 
-use crate::{db::UserExt, dtos::{FilterUserDto, NameUpdateDto, RequestQueryDto, Response, RoleUpdateDto, UserData, UserListResponseDto, UserPasswordUpdateDto, UserResponseDto}, error::{ErrorMessage, HttpError}, middleware::{role_check, JWTAuthMiddeware}, models::UserRole, utils::password, AppState};
+use crate::{db::UserExt, dtos::{FilterUserBoard, FilterUserDto, NameUpdateDto, RequestQueryDto, Response, RoleUpdateDto, TrustPointRequestDto, UserData, UserListResponseDto, UserPasswordUpdateDto, UserResponseDto}, error::{ErrorMessage, HttpError}, middleware::{role_check, JWTAuthMiddeware}, models::usermodel::UserRole, utils::password, AppState};
 
 
 pub fn users_handler() -> Router {
@@ -71,7 +71,7 @@ pub async fn get_users(
 
     let response = UserListResponseDto {
         status: "success".to_string(),
-        users: FilterUserDto::filter_users(&users),
+        users: FilterUserBoard::filter_users(&users),
         results: user_count,
     };
 
@@ -128,7 +128,7 @@ pub async fn update_user_role(
 
     // Update target user
     let updated_user = app_state.db_client
-        .update_user_role(auth_user.user.id, body.target_user_id, body.role)
+        .update_user_role( body.target_user_id, body.role)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
@@ -181,4 +181,57 @@ pub async fn update_user_password(
 
     Ok(Json(response))
 
+}
+
+pub async fn update_trust_point (
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(user): Extension<JWTAuthMiddeware>,
+    Json(body): Json<TrustPointRequestDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    let user_id = user.user.id;
+
+    let updated_user = app_state.db_client
+        .update_trust_point(user_id, body.score_to_add)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let filtered_user = FilterUserDto::filter_user(&updated_user);
+
+    let response = UserResponseDto {
+        status: "success".to_string(),
+        data: UserData {
+            user: filtered_user,
+        }
+    };
+
+    Ok(Json(response))
+
+}
+
+pub async fn get_leaderboard(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Query(query_params): Query<RequestQueryDto>
+) -> Result<impl IntoResponse, HttpError> {
+    query_params.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    let limit = query_params.limit.unwrap_or(100);
+
+    let users = app_state.db_client
+        .get_users_by_trustscore(limit as i64)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let leaderboard = FilterUserBoard::filter_users(&users);
+
+    let response = UserListResponseDto {
+        status: "success".to_string(),
+        users: leaderboard,
+        results: limit as i64
+    };
+
+    Ok(Json(response))
 }
