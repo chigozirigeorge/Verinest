@@ -22,12 +22,23 @@ pub fn users_handler() -> Router {
         "/users", 
         get(get_users)
         .layer(middleware::from_fn(|state, req, next| {
-            role_check(state, req, next, vec![UserRole::Admin])
+            role_check(state, req, next, vec![UserRole::User, UserRole::Admin])
         }))
     )
     .route("/name", put(update_user_name))
     .route("/role", put(update_user_role))
     .route("/password", put(update_user_password))
+    .route(
+        "/trust_point", 
+        put(update_trust_point)
+        .layer(middleware::from_fn(|state, req, next| {
+            role_check(state, req, next, vec![UserRole::User, UserRole::Admin])
+        }))
+    )
+    .route(
+        "/leaderboard", 
+        get(get_leaderboard)
+    )
 }
 
 
