@@ -19,7 +19,7 @@ use db::DBClient;
 use dotenv::dotenv;
 use routes::create_router;
 use sqlx::postgres::PgPoolOptions;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug, Clone)]
@@ -53,11 +53,16 @@ async fn main() {
         }
     };
 
+    let allowed_origins = vec![
+    "https://verinest-frontend.vercel.app".parse::<HeaderValue>().unwrap(),
+    "http://localhost:5173".parse::<HeaderValue>().unwrap(),
+    "http://localhost:8000".parse::<HeaderValue>().unwrap(),
+];
+
     let cors = CorsLayer::new()
-        .allow_origin("https://verinest-frontend.vercel.app".parse::<HeaderValue>().unwrap())
-        .allow_origin(tower_http::cors::Any) //remove this
+        .allow_origin(AllowOrigin::list(allowed_origins))
         .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
-        .allow_credentials(false) //change to true
+        .allow_credentials(true) //change to true
         .allow_methods([Method::GET, Method::POST,Method::PUT]);
 
     let db_client = DBClient::new(pool);
