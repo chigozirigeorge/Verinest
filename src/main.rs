@@ -55,8 +55,9 @@ async fn main() {
 
     let cors = CorsLayer::new()
         .allow_origin("https://verinest-frontend.vercel.app".parse::<HeaderValue>().unwrap())
+        .allow_origin(tower_http::cors::Any) //remove this
         .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
-        .allow_credentials(true) //change to true
+        .allow_credentials(false) //change to true
         .allow_methods([Method::GET, Method::POST,Method::PUT]);
 
     let db_client = DBClient::new(pool);
