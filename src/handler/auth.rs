@@ -1,12 +1,13 @@
 //12
 use std::sync::Arc;
 
-use axum::{extract::Query, http::{header, HeaderMap, StatusCode}, response::{IntoResponse, Redirect}, routing::{get, post}, Extension, Json, Router};
+use axum::{extract::Query, http::{header, HeaderMap}, response::{IntoResponse, Redirect}, routing::{get, post}, Extension, Json, Router};
 use axum_extra::extract::cookie::Cookie;
 use chrono::{Utc, Duration};
 use validator::Validate;
+use uuid::Uuid;
 
-use crate::{db::UserExt, dtos::{ForgotPasswordRequestDto, LoginUserDto, RegisterUserDto, ResetPasswordRequestDto, Response, UserLoginResponseDto, VerifyEmailQueryDto}, error::{ErrorMessage, HttpError}, mail::mails::{send_forgot_password_email, send_verification_email, send_welcome_email}, utils::{password, token}, AppState};
+use crate::{db::UserExt, dtos::{FilterUserDto, ForgotPasswordRequestDto, LoginUserDto, RegisterUserWithReferralDto, ResetPasswordRequestDto, Response, UserData, UserLoginResponseDto, UserResponseDto, VerifyEmailQueryDto}, error::{ErrorMessage, HttpError}, mail::mails::{send_forgot_password_email, send_verification_email, send_welcome_email}, service::referral::generate_referral_code, utils::{password, token}, AppState};
 
 pub fn auth_handler() -> Router {
     Router::new()
@@ -19,45 +20,103 @@ pub fn auth_handler() -> Router {
 
 pub async fn register(
     Extension(app_state): Extension<Arc<AppState>>,
-    Json(body): Json<RegisterUserDto>
+    Json(body): Json<RegisterUserWithReferralDto>,
 ) -> Result<impl IntoResponse, HttpError> {
     body.validate()
         .map_err(|e| HttpError::bad_request(e.to_string()))?;
 
-    let verification_token = uuid::Uuid::new_v4().to_string();
-    let expires_at = Utc::now() + Duration::hours(24);
+    // Check if user already used a referral code before
+    let existing_user = app_state.db_client
+        .get_user(None, None, Some(&body.email), None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let hash_password = password::hash(&body.password)
+    if existing_user.is_some() {
+        return Err(HttpError::bad_request("Email already registered"));
+    }
+
+    // Check if referral code exists and get referrer
+    let mut referrer_id: Option<Uuid> = None;
+    if let Some(ref code) = body.referral_code {
+        if let Some(referrer) = app_state.db_client
+            .get_user_by_referral_code(code)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))? 
+        {
+            // Prevent self-referral
+            if referrer.email == body.email {
+                return Err(HttpError::bad_request("Cannot refer yourself"));
+            }
+            referrer_id = Some(referrer.id);
+        } else {
+            return Err(HttpError::bad_request("Invalid referral code"));
+        }
+    }
+
+    // Create user
+    let hashed_password = password::hash(&body.password)
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let verification_token = uuid::Uuid::new_v4().to_string();
+    let token_expires_at = Utc::now() + Duration::hours(24);
+
+    let user = app_state.db_client
+        .save_user(
+            body.name,
+            body.username,
+            body.email,
+            hashed_password,
+            verification_token.clone(),
+            token_expires_at,
+        )
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Generate and save referral code for the new user
+    let referral_code = generate_referral_code();
+    let user_with_code = app_state.db_client
+        .update_user_referral_code(user.id, referral_code.clone())
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Process referral if applicable
+    if let Some(ref_id) = referrer_id {
+        // Add points to referrer
+        let updated_referrer = app_state.db_client
+            .add_referral_points(ref_id, 10)
+            .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let result = app_state.db_client
-        .save_user(&body.name, &body.username, &body.email, &hash_password, &verification_token, expires_at)
-        .await;
+        // Increment referral count
+        let _ = app_state.db_client
+            .increment_referral_count(ref_id)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    match result {
-        Ok(_user) => {
-            let send_email_result = send_verification_email(&body.email, &body.name, &verification_token).await;
+        // Create referral record
+        let _ = app_state.db_client
+            .create_referral_record(ref_id, user.id, 10)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-            if let Err(e) = send_email_result {
-                eprintln!("Failed to send verification email: {}", e);
-            }
-
-            Ok((StatusCode::CREATED, Json(Response {
-                status: "success",
-                message: "Registration successful! Please check your email to verify your account.".to_string()
-            })))
-        },
-        Err(sqlx::Error::Database(db_err)) => {
-            if db_err.is_unique_violation() {
-                Err(HttpError::unique_constraint_violation(
-                    ErrorMessage::EmailExist.to_string(),
-                ))
-            } else {
-                Err(HttpError::server_error(db_err.to_string()))
-            }
-        }
-        Err(e) => Err(HttpError::server_error(e.to_string()))
+        tracing::info!(
+            "Referral successful: {} referred {} (+10 points)",
+            updated_referrer.username,
+            user_with_code.username
+        );
     }
+
+    // Send verification email
+    send_verification_email(&user.email, &user.username,&verification_token)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let filtered_user = FilterUserDto::filter_user(&user_with_code);
+    
+    Ok(Json(UserResponseDto {
+        status: "success".to_string(),
+        data: UserData { user: filtered_user },
+    }))
 }
 
 pub async fn login(
@@ -138,7 +197,7 @@ pub async fn verify_email(
     app_state.db_client.verifed_token(&query_params.token).await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let send_welcome_email_result = send_welcome_email(&user.email, &user.name).await;
+    let send_welcome_email_result = send_welcome_email(&user.email, &user.username).await;
 
     if let Err(e) = send_welcome_email_result {
         eprintln!("Failed to send welcome email: {}", e);
@@ -164,7 +223,7 @@ pub async fn verify_email(
         cookie.to_string().parse().unwrap() 
     );
 
-    let frontend_url = format!("http://localhost:5173/settings");
+    let frontend_url = format!("https://verinest-frontend.vercel.app/login");
 
     let redirect = Redirect::to(&frontend_url);
 
@@ -199,9 +258,9 @@ pub async fn forgot_password(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let reset_link = format!("http://localhost:5173/reset-password?token={}", &verification_token);
+    let reset_link = format!("https://verinest-frontend.vercel.app/reset-password?token={}", &verification_token);
 
-    let email_sent = send_forgot_password_email(&user.email, &reset_link, &user.name).await;
+    let email_sent = send_forgot_password_email(&user.email, &reset_link, &user.username).await;
 
     if let Err(e) = email_sent {
         eprintln!("Failed to send forgot password email: {}", e);

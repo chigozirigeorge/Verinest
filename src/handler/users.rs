@@ -1,12 +1,12 @@
 //13
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use axum::{extract::Query, middleware, response::IntoResponse, routing::{get, put}, Extension, Json, Router};
 use validator::Validate;
 
 
 
-use crate::{db::UserExt, dtos::{FilterUserBoard, FilterUserDto, NameUpdateDto, RequestQueryDto, Response, RoleUpdateDto, TrustPointRequestDto, UserData, UserListResponseDto, UserPasswordUpdateDto, UserResponseDto}, error::{ErrorMessage, HttpError}, middleware::{role_check, JWTAuthMiddeware}, models::usermodel::UserRole, utils::password, AppState};
+use crate::{db::UserExt, dtos::{FilterUserBoard, FilterUserDto, NameUpdateDto, RequestQueryDto, Response, RoleUpdateDto, TrustPointRequestDto, UserData, UserListResponseDto, UserPasswordUpdateDto, UserResponseDto}, error::{ErrorMessage, HttpError}, middleware::{role_check, JWTAuthMiddeware}, models::usermodel::UserRole, service::referral::generate_referral_link, utils::password, AppState};
 
 
 pub fn users_handler() -> Router {
@@ -38,6 +38,18 @@ pub fn users_handler() -> Router {
     .route(
         "/leaderboard", 
         get(get_leaderboard)
+    )
+    .route(
+        "/referral-link", 
+        get(get_referral_link)
+    )
+    .route(
+        "/referral-stats", 
+        get(get_referral_stats)
+    )
+    .route(
+        "/referral-status", 
+        get(check_referral_status)
     )
 }
 
@@ -245,4 +257,91 @@ pub async fn get_leaderboard(
     };
 
     Ok(Json(response))
+}
+
+pub async fn get_referral_link(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(user): Extension<JWTAuthMiddeware>
+) -> Result<impl IntoResponse, HttpError> {
+    
+    let user_id = user.user.id;
+
+    let app_url = env::var("APP_URL").expect("APP_URL is expected");
+
+    let user = app_state.db_client
+        .get_user(Some(user_id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or(HttpError::server_error("User not Found"))?;
+
+    let referral_code = user.referral_code
+        .ok_or(HttpError::bad_request("No referral code found"))?;
+
+    let referral_link = generate_referral_link(&app_url, &referral_code);
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "data": {
+            "referral_code": referral_code,
+            "referral_link": referral_link
+        }
+    })))
+}
+
+pub async fn get_referral_stats(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(user): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    let user_id = user.user.id;
+    
+    let stats = app_state.db_client
+        .get_user_referral_stats(user_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "data": {
+            "total_referrals": stats.total_referrals,
+            "total_points_earned": stats.total_points_earned,
+            "successful_referrals": stats.successful_referrals
+        }
+    })))
+}
+
+pub async fn check_referral_status(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(user): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    let user_id = user.user.id;
+    
+    let referral = app_state.db_client
+        .get_referral_by_referee(user_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let referrer_info = if let Some(ref referral) = referral {
+        let referrer = app_state.db_client
+            .get_user(Some(referral.referrer_id), None, None, None)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?
+            .ok_or(HttpError::server_error("Referrer not found"))?;
+        
+        Some(serde_json::json!({
+            "referrer_name": referrer.name,
+            "referrer_username": referrer.username,
+            "points_earned": referral.points_awarded,
+            "referred_at": referral.created_at
+        }))
+    } else {
+        None
+    };
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "data": {
+            "was_referred": referral.is_some(),
+            "referral_info": referrer_info
+        }
+    })))
 }

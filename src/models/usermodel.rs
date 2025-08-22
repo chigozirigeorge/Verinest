@@ -65,6 +65,8 @@ pub struct User {
     pub trust_score: i32,
     pub verified: bool,
     pub verification_type: VerificationType,
+    pub referral_code: Option<String>, //added this line
+     pub referral_count: Option<i32>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_number: Option<String>,

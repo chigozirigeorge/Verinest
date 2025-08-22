@@ -9,11 +9,11 @@ use serde_json;
 use crate::models::usermodel::{User, UserRole};
 
 #[derive(Validate, Debug, Default, Clone, Serialize, Deserialize)]
-pub struct RegisterUserDto {
+pub struct RegisterUserWithReferralDto {
     #[validate(length(min = 1, message = "Name is required"))]
     pub name: String,
 
-     #[validate(length(min = 1, message = "Name is required"))]
+     #[validate(length(min = 1, message = "Username is required"))]
     pub username: String,
 
     #[validate(
@@ -33,6 +33,8 @@ pub struct RegisterUserDto {
     )]
     #[serde(rename = "passwordConfirm")]
     pub password_confirm: String,
+
+    pub referral_code: Option<String>, //added
 }
 
 #[derive(Validate, Debug, Default, Clone, Serialize, Deserialize)]
