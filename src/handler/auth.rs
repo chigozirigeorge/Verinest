@@ -133,8 +133,8 @@ pub async fn login(
 
     let user = result.ok_or(HttpError::bad_request(ErrorMessage::WrongCredentials.to_string()))?;
 
-    let password_matched = password::compare(&body.password, &user.password)
-        .map_err(|_| HttpError::bad_request(ErrorMessage::WrongCredentials.to_string()))?;
+    let password_matched = password::compare(&body.password, Some(user.password.as_deref().unwrap_or("")))
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
 
     if password_matched {
         let token = token::create_token(

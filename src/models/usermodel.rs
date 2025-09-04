@@ -53,6 +53,29 @@ impl VerificationType {
         }
     }
 }
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, sqlx::Type, PartialEq)]
+#[sqlx(type_name = "verification_type", rename_all = "snake_case")]
+pub enum VerificationStatus {
+    Pending,
+    Submitted,
+    Processing,
+    Approved,
+    Rejected,
+    Expired
+}
+
+impl VerificationStatus {
+    pub fn to_str(&self) -> &str {
+        match self {
+            VerificationStatus::Pending => "pending",
+            VerificationStatus::Submitted => "submitted",
+            VerificationStatus::Processing => "processing",
+            VerificationStatus::Approved => "approved",
+            VerificationStatus::Rejected => "rejected",
+            VerificationStatus::Expired => "expired",
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize, sqlx::FromRow, sqlx::Type, Clone)]
 pub struct User {
@@ -60,35 +83,44 @@ pub struct User {
     pub name: String,
     pub username: String,
     pub email: String,
-    pub password: String,
+    pub password: Option<String>, // Changed to Option for OAuth users
     pub role: UserRole,
     pub trust_score: i32,
     pub verified: bool,
     pub verification_type: VerificationType,
-    pub referral_code: Option<String>, //added this line
-     pub referral_count: Option<i32>,
-
+    pub referral_code: Option<String>,
+    pub referral_count: Option<i32>,
+    
+    // OAuth fields
+    pub google_id: Option<String>,
+    pub avatar_url: Option<String>,
+    
+    // Wallet field
+    pub wallet_address: Option<String>,
+    
+    // Verification fields
+    pub nin_number: Option<String>,
+    pub verification_document_id: Option<String>,
+    pub facial_verification_id: Option<String>,
+    pub nearest_landmark: Option<String>,
+    pub verification_status: Option<VerificationStatus>,
+    
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_number: Option<String>,
-    pub wallet_address: Option<String>,
     pub nationality: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dob: Option<DateTime<Utc>>,
     
-    /// Local Government Area (for Nigerian users)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lga: Option<String>,
     
-    /// 4-digit transaction PIN (hashed)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transaction_pin: Option<i16>,
     
-    /// Next of kin contact information
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_of_kin: Option<String>,
     
-    /// Email verification token
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_token: Option<String>,
     

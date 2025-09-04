@@ -1,12 +1,31 @@
 //13
 use std::{env, sync::Arc};
 
-use axum::{extract::Query, middleware, response::IntoResponse, routing::{get, put}, Extension, Json, Router};
+use axum::{extract::Query, middleware, response::IntoResponse, routing::{get, post, put}, Extension, Json, Router};
 use validator::Validate;
 
 
 
-use crate::{db::UserExt, dtos::{FilterUserBoard, FilterUserDto, NameUpdateDto, RequestQueryDto, Response, RoleUpdateDto, TrustPointRequestDto, UserData, UserListResponseDto, UserPasswordUpdateDto, UserResponseDto}, error::{ErrorMessage, HttpError}, middleware::{role_check, JWTAuthMiddeware}, models::usermodel::UserRole, service::referral::generate_referral_link, utils::password, AppState};
+use crate::{
+    db::UserExt, 
+    dtos::{
+        FilterUserBoard, FilterUserDto, 
+        NameUpdateDto, RequestQueryDto, 
+        Response, RoleUpdateDto, 
+        TrustPointRequestDto, UserData, 
+        UserListResponseDto, UserPasswordUpdateDto, 
+        UserResponseDto}, 
+    error::{ErrorMessage, HttpError}, 
+    handler::{
+        google_oauth::get_google_user, 
+        wallet::{
+            generate_verification_message, get_wallet, 
+            get_wallet_verification_status, update_wallet, 
+            verify_wallet
+        }}, middleware::{role_check, JWTAuthMiddeware}, 
+        models::usermodel::UserRole, 
+        service::referral::generate_referral_link, 
+        utils::password, AppState};
 
 
 pub fn users_handler() -> Router {
@@ -51,6 +70,11 @@ pub fn users_handler() -> Router {
         "/referral-status", 
         get(check_referral_status)
     )
+    .route("/wallet", put(update_wallet).get(get_wallet))
+    .route("/wallet/verify", post(verify_wallet))
+    .route("/wallet/verification-message", get(generate_verification_message))
+    .route("/wallet/verification-status", get(get_wallet_verification_status))
+    .route("/oauth/google", get(get_google_user))
 }
 
 
@@ -182,7 +206,7 @@ pub async fn update_user_password(
 
     let user = result.ok_or(HttpError::unauthorized(ErrorMessage::InvalidToken.to_string()))?;
 
-    let password_match = password::compare(&body.old_password, &user.password)
+    let password_match = password::compare(&body.old_password, Some(user.password.as_deref().unwrap_or("")))
             .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     if !password_match {

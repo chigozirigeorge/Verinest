@@ -34,7 +34,9 @@ pub fn hash(password: impl Into<String>) -> Result<String, ErrorMessage> {
     Ok(hashed_password)
 }
 
-pub fn compare(password: &str, hashed_password: &str) -> Result<bool, ErrorMessage> {
+pub fn compare(password: &str, hashed_password: Option<&str>) -> Result<bool, ErrorMessage> {
+
+    let hashed_password = hashed_password.ok_or_else(||ErrorMessage::WrongCredentials)?;
     if password.is_empty() {
         return Err(ErrorMessage::EmptyPassword);
     }
