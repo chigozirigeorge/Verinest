@@ -36,7 +36,7 @@ pub async fn google_login(
     let google_oauth = GoogleAuthService::new()
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let redirect_url = format!("http://localhost:8000/api/oauth/google/callback");
+    let redirect_url = format!("https://verinest.vercel.app/api/oauth/google/callback");
     println!("📋 Redirect URL: {}", redirect_url);
 
     let state = CsrfToken::new_random();
@@ -101,7 +101,7 @@ pub async fn google_callback(
     let jar = jar.remove(Cookie::named("oauth_state"));
 
     // let redirect_url = format!("{}/api/auth/google/callback", app_state.env.app_url);
-    let redirect_url = "http://localhost:8000/api/oauth/google/callback".to_string();
+    let redirect_url = "https://verinest.vercel.app/api/oauth/google/callback".to_string();
 
     //Exchange code for access token
     println!("🔄 Exchanging code for tokens...");
@@ -182,12 +182,12 @@ pub async fn test_url_generation() -> Result<impl IntoResponse, HttpError> {
     println!("   Simple format works: {}", test_url);
 
     println!("🧪 Testing urlencoding...");
-    let encoded = urlencoding::encode("http://localhost:8000/callback");
+    let encoded = urlencoding::encode("https://verinest.vercel.app/callback");
     println!("   URL encoding works: {}", encoded);
 
     println!("🧪 Testing get_authorization_url method...");
     let auth_url = google_oauth.get_authorization_url(
-        "http://localhost:8000/callback",
+        "https://verinest.vercel.app/callback",
         "test_state"
     );
 
