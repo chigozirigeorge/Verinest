@@ -6,7 +6,7 @@ use oauth2::CsrfToken;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 
 use crate::{
-    db::UserExt, 
+    db::userdb::UserExt, 
     error::HttpError, 
     middleware::JWTAuthMiddeware, 
     service::google_oauth::GoogleAuthService, 
@@ -36,7 +36,7 @@ pub async fn google_login(
     let google_oauth = GoogleAuthService::new()
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let redirect_url = format!("https://verinest.vercel.app/api/oauth/google/callback");
+    let redirect_url = format!("https://verinest.up.railway.app/api/oauth/google/callback");
     println!("📋 Redirect URL: {}", redirect_url);
 
     let state = CsrfToken::new_random();
@@ -101,7 +101,7 @@ pub async fn google_callback(
     let jar = jar.remove(Cookie::named("oauth_state"));
 
     // let redirect_url = format!("{}/api/auth/google/callback", app_state.env.app_url);
-    let redirect_url = "https://verinest.vercel.app/api/oauth/google/callback".to_string();
+    let redirect_url = "https://verinest.up.railway.app/api/oauth/google/callback".to_string();
 
     //Exchange code for access token
     println!("🔄 Exchanging code for tokens...");
