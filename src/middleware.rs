@@ -13,7 +13,7 @@ use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    db::UserExt,
+    db::userdb::UserExt,
     error::{ErrorMessage, HttpError},
     models::usermodel::{User, UserRole},
     utils::token,

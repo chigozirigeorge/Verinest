@@ -7,7 +7,20 @@ use chrono::{Utc, Duration};
 use validator::Validate;
 use uuid::Uuid;
 
-use crate::{db::UserExt, dtos::{FilterUserDto, ForgotPasswordRequestDto, LoginUserDto, RegisterUserWithReferralDto, ResetPasswordRequestDto, Response, UserData, UserLoginResponseDto, UserResponseDto, VerifyEmailQueryDto}, error::{ErrorMessage, HttpError}, mail::mails::{send_forgot_password_email, send_verification_email, send_welcome_email}, service::referral::generate_referral_code, utils::{password, token}, AppState};
+use crate::{
+    db::userdb::UserExt, 
+    dtos::userdtos::{
+        FilterUserDto, ForgotPasswordRequestDto, 
+        LoginUserDto, RegisterUserWithReferralDto, 
+        ResetPasswordRequestDto, Response, UserData, 
+        UserLoginResponseDto, UserResponseDto, VerifyEmailQueryDto
+    }, 
+    error::{ErrorMessage, HttpError}, 
+    mail::mails::{
+        send_forgot_password_email, send_verification_email, send_welcome_email
+    }, 
+    service::referral::generate_referral_code, 
+    utils::{password, token}, AppState};
 
 pub fn auth_handler() -> Router {
     Router::new()

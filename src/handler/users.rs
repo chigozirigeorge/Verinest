@@ -7,8 +7,8 @@ use validator::Validate;
 
 
 use crate::{
-    db::UserExt, 
-    dtos::{
+    db::userdb::UserExt, 
+    dtos::userdtos::{
         FilterUserBoard, FilterUserDto, 
         NameUpdateDto, RequestQueryDto, 
         Response, RoleUpdateDto, 

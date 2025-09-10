@@ -8,7 +8,7 @@ use hex;
 use tiny_keccak::{Keccak, Hasher};
 
 use crate::{
-    db::UserExt,
+    db::userdb::UserExt,
     error::HttpError,
     middleware::JWTAuthMiddeware,
     models::walletmodels::{WalletUpdateRequest, WalletVerificationRequest},
@@ -140,6 +140,17 @@ pub async fn verify_wallet(
 ) -> Result<impl IntoResponse, HttpError> {
     let user_id = user.user.id;
 
+    //Get stored nonce and validate 
+    let stored_nonce = app_state.db_client
+        .get_wallet_verification_nonce(user_id)
+        .await
+        .map_err(|_| HttpError::bad_request("Nonce expired or not found"))?;
+
+    //Verify the message contains the correct nonce
+    if !body.message.contains(&stored_nonce.to_string()) {
+        return Err(HttpError::bad_request("Invalid Nonce"));
+    }
+
     //Validate wallet address format
     let recovered_address = verify_wallet_signature(
         &body.signature, 
@@ -172,6 +183,12 @@ pub async fn verify_wallet(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+    //Clear the nonce after succesful verification
+    app_state.db_client
+        .clear_wallet_verification_nonce(user_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
     Ok(Json(serde_json::json!({
         "status": "success",
         "message": "wallet verified successfully",
@@ -193,10 +210,10 @@ pub async fn generate_verification_message(
     let message = format!("Please sign this message to verify your wallet.Nonce: {}", nonce);
 
     //Store the nonce in the database associated with the user
-    // app_state.db_client
-    //     .store_wallet_verification_nonce(user_id, nonce)
-    //     .await
-    //     .map_err(|e| HttpError::server_error(e.to_string()))?;
+    app_state.db_client
+        .store_wallet_verification_nonce(user_id, nonce)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     Ok(Json(serde_json::json!({
         "status": "success",

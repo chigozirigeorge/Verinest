@@ -1,25 +1,15 @@
-//5
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{Pool, Postgres};
 use uuid::Uuid;
+
+use super::db::DBClient;
 
 use crate::models::{
     referralmodel::{Referral, ReferralStats, ReferralUser}, 
-    usermodel::{User, UserRole, VerificationType, VerificationStatus},
+    usermodel::{User, UserRole, VerificationStatus, VerificationType}, 
     walletmodels::{UserWallet, WalletUpdateRequest}
-}; 
+};
 
-#[derive(Debug, Clone)]
-pub struct DBClient {
-    pool: Pool<Postgres>,
-}
-
-impl DBClient {
-    pub fn new(pool: Pool<Postgres>) -> Self {
-        DBClient { pool }
-    }
-}
 
 #[async_trait]
 pub trait UserExt {
@@ -177,6 +167,23 @@ pub trait UserExt {
         &self,
         wallet_address: &str,
     ) -> Result<Option<User>, sqlx::Error>;
+
+    async fn store_wallet_verification_nonce(
+        &self,
+        user_id: Uuid,
+        nonce: i64,
+    ) -> Result<(), sqlx::Error>;
+
+    async fn get_wallet_verification_nonce(
+        &self,
+        user_id: Uuid
+    ) -> Result<i64, sqlx::Error>;
+
+    async fn clear_wallet_verification_nonce(
+        &self,
+        user_id: Uuid,
+    ) -> Result<(), sqlx::Error>;
+
 }
 
 #[async_trait]
@@ -946,4 +953,68 @@ impl UserExt for DBClient {
         .fetch_optional(&self.pool)
         .await
     }
+
+    async fn store_wallet_verification_nonce(
+        &self,
+        user_id: Uuid,
+        nonce: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            r#"
+                INSERT INTO wallet_verification_nonces (user_id, nonce, expires_at)
+                VALUES ($1, $2, NOW() + INTERVAL '5 minutes')
+                ON CONFLICT (user_id)
+                DO UPDATE SET
+                    nonce = $2,
+                    expires_at = NOW() + INTERVAL '5 minutes',
+                    updated_at = NOW()
+            "#,
+            user_id,
+            nonce
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn get_wallet_verification_nonce(
+        &self,
+        user_id: Uuid,
+    ) -> Result<i64, sqlx::Error> {
+        let record = sqlx::query!(
+            r#"
+                SELECT nonce 
+                FROM wallet_verification_nonces
+                WHERE user_id = $1
+                AND expires_at > NOW()
+            "#,
+            user_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match record {
+            Some(record) => Ok(record.nonce),
+            None => Err(sqlx::Error::RowNotFound),
+        }
+    }
+
+    async fn clear_wallet_verification_nonce(
+        &self,
+        user_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            r#"
+                DELETE FROM wallet_verification_nonces
+                WHERE user_id = $1
+            "#,
+            user_id
+        )
+        .execute(&self.pool)
+        .await?;
+
+    Ok(())
+    }
+
 }

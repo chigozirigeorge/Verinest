@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use axum::http::{header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE}, HeaderValue, Method};
 use config::Config;
-use db::DBClient;
+use crate::db::db::DBClient;
 use dotenv::dotenv;
 use routes::create_router;
 use sqlx::postgres::PgPoolOptions;
