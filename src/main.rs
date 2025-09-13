@@ -55,6 +55,7 @@ async fn main() {
 
     let allowed_origins = vec![
     "https://verinest.vercel.app".parse::<HeaderValue>().unwrap(),
+    "https://verinest.up.railway.app".parse::<HeaderValue>().unwrap(),
     "http://localhost:5173".parse::<HeaderValue>().unwrap(),
     "http://localhost:8000".parse::<HeaderValue>().unwrap(),
 ];
@@ -85,3 +86,4 @@ async fn main() {
 
     axum::serve(listener, app).await.unwrap();
 }
+
