@@ -24,31 +24,31 @@ use crate::{
 
 pub fn naira_wallet_handler() -> Router {
     Router::new()
-        // Wallet management
-        .route("/wallet", get(get_wallet))
-        .route("/wallet/create", post(create_wallet))
-        .route("/wallet/summary", get(get_wallet_summary))
+        // Wallet management - remove /wallet prefix since router will be mounted at /wallet
+        .route("/", get(get_wallet))  // ✅ Becomes /api/wallet/wallet when mounted
+        .route("/create", post(create_wallet))  // ✅ Becomes /api/wallet/create
+        .route("/summary", get(get_wallet_summary))
         
         // Transactions
-        .route("/wallet/deposit", post(initiate_deposit))
-        .route("/wallet/deposit/verify", post(verify_deposit))
-        .route("/wallet/withdraw", post(withdraw_funds))
-        .route("/wallet/transfer", post(transfer_funds))
+        .route("/deposit", post(initiate_deposit))
+        .route("/deposit/verify", post(verify_deposit))
+        .route("/withdraw", post(withdraw_funds))
+        .route("/transfer", post(transfer_funds))
         
         // Transaction history
-        .route("/wallet/transactions", get(get_transaction_history))
-        .route("/wallet/transaction/:reference", get(get_transaction_by_ref))
+        .route("/transactions", get(get_transaction_history))
+        .route("/transaction/:reference", get(get_transaction_by_ref))
         
         // Bank accounts
-        .route("/wallet/bank-accounts", get(get_bank_accounts))
-        .route("/wallet/bank-accounts", post(add_bank_account))
-        .route("/wallet/bank-accounts/:account_id/verify", post(verify_bank_account))
-        .route("/wallet/bank-accounts/:account_id/primary", put(set_primary_account))
-        .route("/wallet/bank-accounts/resolve", post(resolve_account_number))
+        .route("/bank-accounts", get(get_bank_accounts))
+        .route("/bank-accounts", post(add_bank_account))
+        .route("/bank-accounts/:account_id/verify", post(verify_bank_account))
+        .route("/bank-accounts/:account_id/primary", put(set_primary_account))
+        .route("/bank-accounts/resolve", post(resolve_account_number))
         
         // Webhooks
-        .route("/wallet/webhook/paystack", post(paystack_webhook))
-        .route("/wallet/webhook/flutterwave", post(flutterwave_webhook))
+        .route("/webhook/paystack", post(paystack_webhook))
+        .route("/webhook/flutterwave", post(flutterwave_webhook))
 }
 
 // Wallet Management Handlers
