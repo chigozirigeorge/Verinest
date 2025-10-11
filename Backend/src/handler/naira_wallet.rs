@@ -224,8 +224,24 @@ pub async fn handle_paystack_redirect(
             .map_err(|e| HttpError::server_error(e.to_string()))?
             .ok_or_else(|| HttpError::not_found("Transaction not found"))?;
 
-        // Process payment if still pending
-        if transaction.status == Some(TransactionStatus::Pending) {
+        // Check transaction status
+        if transaction.status == Some(TransactionStatus::Completed) {
+            // Transaction already processed, just redirect to success page
+            tracing::info!("Transaction {} already completed, redirecting to success page", reference);
+        } else if transaction.status == Some(TransactionStatus::Pending) {
+            // Process payment if still pending
+            let _ = app_state
+                .db_client
+                .update_transaction_status(
+                    transaction.id,
+                    TransactionStatus::Completed,
+                    Some(verification.gateway_reference),
+                )
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+            // Credit the wallet with a new reference to avoid duplicate transaction
+            let credit_reference = format!("CR-{}", reference);
             let _ = app_state
                 .db_client
                 .credit_wallet(
@@ -233,7 +249,7 @@ pub async fn handle_paystack_redirect(
                     verification.amount,
                     TransactionType::Deposit,
                     "Deposit via Paystack redirect".to_string(),
-                    reference.to_string(),
+                    credit_reference,
                     Some(verification.gateway_reference),
                     verification.metadata,
                 )
