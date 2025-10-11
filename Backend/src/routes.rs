@@ -41,8 +41,10 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/transfer", post(crate::handler::naira_wallet::transfer_funds))
         .route("/transactions", get(crate::handler::naira_wallet::get_transaction_history))
         .route("/transaction/:reference", get(crate::handler::naira_wallet::get_transaction_by_ref))
-        .route("/bank-accounts", get(crate::handler::naira_wallet::get_bank_accounts))
-        .route("/bank-accounts", post(crate::handler::naira_wallet::add_bank_account))
+        .route("/bank-accounts", 
+        get(crate::handler::naira_wallet::get_bank_accounts)
+        .post(crate::handler::naira_wallet::add_bank_account)
+        )
         .route("/bank-accounts/:account_id/verify", post(crate::handler::naira_wallet::verify_bank_account))
         .route("/bank-accounts/:account_id/primary", put(crate::handler::naira_wallet::set_primary_account))
         .route("/bank-accounts/resolve", post(crate::handler::naira_wallet::resolve_account_number))

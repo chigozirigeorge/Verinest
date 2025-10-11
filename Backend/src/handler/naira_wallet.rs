@@ -48,8 +48,10 @@ pub fn naira_wallet_handler() -> Router {
         .route("/transaction/:reference", get(get_transaction_by_ref))
         
         // Bank accounts
-        .route("/bank-accounts", get(get_bank_accounts))
-        .route("/bank-accounts", post(add_bank_account))
+        .route("/bank-accounts", 
+        get(get_bank_accounts)
+        .post(add_bank_account)
+        )
         .route("/bank-accounts/:account_id/verify", post(verify_bank_account))
         .route("/bank-accounts/:account_id/primary", put(set_primary_account))
         .route("/bank-accounts/resolve", post(resolve_account_number))
