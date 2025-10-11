@@ -235,7 +235,7 @@ pub async fn handle_paystack_redirect(
                 .update_transaction_status(
                     transaction.id,
                     TransactionStatus::Completed,
-                    Some(verification.gateway_reference),
+                    Some(verification.gateway_reference.clone()),
                 )
                 .await
                 .map_err(|e| HttpError::server_error(e.to_string()))?;
