@@ -50,7 +50,9 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
 
     // Public wallet routes (no auth required but secure)
     let public_wallet_routes = Router::new()
-        .route("/deposit/public-verify", post(public_verify_deposit))  // Public but secure verification
+        .route("/deposit/verify", 
+            get(crate::handler::naira_wallet::handle_paystack_redirect)
+            .post(crate::handler::naira_wallet::verify_deposit))  // Both GET and POST handlers
         .route("/webhook/paystack", post(paystack_webhook))
         .route("/webhook/flutterwave", post(flutterwave_webhook));
 

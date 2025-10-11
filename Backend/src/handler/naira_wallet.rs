@@ -37,8 +37,9 @@ pub fn naira_wallet_handler() -> Router {
         
         // Transactions
         .route("/deposit", post(initiate_deposit))
-        .route("/deposit/verify", get(handle_paystack_redirect))
-        .route("/deposit/verify", post(verify_deposit))
+        .route("/deposit/verify", 
+            get(handle_paystack_redirect)
+            .post(verify_deposit))
         .route("/withdraw", post(withdraw_funds))
         .route("/transfer", post(transfer_funds))
         
