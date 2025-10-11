@@ -1,6 +1,7 @@
 // handler/naira_wallet.rs
 use std::sync::Arc;
 use axum::{
+    http::{ HeaderMap, StatusCode},
     extract::{Path, Query},
     response::IntoResponse,
     routing::{get, post, put},
@@ -8,6 +9,10 @@ use axum::{
 };
 use uuid::Uuid;
 use validator::Validate;
+use hmac::{Hmac, Mac};
+use sha2::Sha512;
+use serde_json::Value;
+use subtle::ConstantTimeEq;
 
 use crate::{
     db::{
@@ -595,482 +600,574 @@ pub async fn resolve_account_number(
     )))
 }
 
-// Webhook handlers would process payment confirmations from Paystack/Flutterwave
-pub async fn paystack_webhook(
-    Extension(app_state): Extension<Arc<AppState>>,
-    Json(body): Json<PaymentWebhookDto>,
-) -> Result<impl IntoResponse, HttpError> {
-    // Verify webhook signature
-    // Process payment confirmation
-    // Update transaction status
-    Ok(Json(serde_json::json!({"status": "success"})))
-}
 
-pub async fn flutterwave_webhook(
+// In naira_wallet.rs - Add secure public verification
+pub async fn public_verify_deposit(
     Extension(app_state): Extension<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, HttpError> {
-    // Process Flutterwave webhook
-    Ok(Json(serde_json::json!({"status": "success"})))
+    let reference = body["reference"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Reference is required"))?;
+
+    // SECURITY: Validate reference format to prevent random guessing
+    if !reference.starts_with("VRN_") || reference.len() < 10 {
+        return Err(HttpError::bad_request("Invalid reference format"));
+    }
+
+    // Get transaction by reference first
+    let transaction = app_state
+        .db_client
+        .get_transaction_by_reference(reference)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Transaction not found"))?;
+
+    // SECURITY: Check if transaction is already completed
+    if transaction.status == Some(TransactionStatus::Completed) {
+        let response: TransactionResponseDto = transaction.into();
+        return Ok(Json(WalletApiResponse::success(
+            "Payment already verified",
+            response,
+        )));
+    }
+
+    // SECURITY: Verify payment with provider (Paystack)
+    let payment_service = PaymentProviderService::new(&app_state.env);
+    let verification = payment_service
+        .verify_payment(reference)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // SECURITY: Only process if payment provider confirms success
+    if verification.status == "success" {
+        // Credit wallet using user_id from transaction
+        let updated_transaction = app_state
+            .db_client
+            .credit_wallet(
+                transaction.user_id,
+                verification.amount,
+                TransactionType::Deposit,
+                "Deposit via payment gateway".to_string(),
+                reference.to_string(),
+                Some(verification.gateway_reference),
+                verification.metadata,
+            )
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+        let response: TransactionResponseDto = updated_transaction.into();
+        Ok(Json(WalletApiResponse::success(
+            "Deposit verified successfully",
+            response,
+        )))
+    } else {
+        // SECURITY: Log failed verification attempts
+        tracing::warn!("Failed payment verification for reference: {}", reference);
+        Err(HttpError::bad_request("Payment verification failed"))
+    }
 }
 
 
+// Paystack Webhook Handler
+pub async fn paystack_webhook(
+    Extension(app_state): Extension<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, HttpError> {
+    // Verify webhook signature
+    let signature = headers
+        .get("x-paystack-signature")
+        .and_then(|h| h.to_str().ok())
+        .ok_or_else(|| {
+            HttpError::new(
+                "Missing or invalid Paystack signature".to_string(),
+                StatusCode::BAD_REQUEST,
+            )
+        })?;
 
+    let webhook_secret: &String = &app_state.env.paystack_secret_key;
 
+    // Verify HMAC signature
+    if !verify_paystack_signature(&body, signature, webhook_secret) {
+        tracing::warn!("Invalid Paystack webhook signature received");
+        return Err(HttpError::new(
+            "Invalid webhook signature".to_string(),
+            StatusCode::UNAUTHORIZED,
+        ));
+    }
 
-// //work on this later
-// use axum::{
-//     extract::{Path, Query},
-//     response::IntoResponse,
-//     routing::{get, post, put},
-//     Extension, Json, Router,
-//     http::{HeaderMap, StatusCode},
-// };
-// use hmac::{Hmac, Mac};
-// use sha2::Sha512;
-// use serde_json::Value;
+    // Process webhook event
+    let event_type = body["event"]
+        .as_str()
+        .ok_or_else(|| {
+            HttpError::new(
+                "Missing event type in webhook payload".to_string(),
+                StatusCode::BAD_REQUEST,
+            )
+        })?;
 
-// // ... other imports ...
+    let data = &body["data"];
 
-// // Paystack Webhook Handler
-// pub async fn paystack_webhook(
-//     Extension(app_state): Extension<Arc<AppState>>,
-//     headers: HeaderMap,
-//     Json(body): Json<serde_json::Value>,
-// ) -> Result<impl IntoResponse, HttpError> {
-//     // Verify webhook signature
-//     let signature = headers
-//         .get("x-paystack-signature")
-//         .and_then(|h| h.to_str().ok())
-//         .ok_or_else(|| {
-//             HttpError::new(
-//                 StatusCode::BAD_REQUEST,
-//                 "Missing or invalid Paystack signature".to_string(),
-//             )
-//         })?;
+    match event_type {
+        "charge.success" => {
+            process_paystack_successful_payment(&app_state, data).await?;
+        }
+        "transfer.success" => {
+            process_paystack_successful_transfer(&app_state, data).await?;
+        }
+        "transfer.failed" => {
+            process_paystack_failed_transfer(&app_state, data).await?;
+        }
+        "transfer.reversed" => {
+            process_paystack_reversed_transfer(&app_state, data).await?;
+        }
+        _ => {
+            tracing::info!("Unhandled Paystack webhook event: {}", event_type);
+        }
+    }
 
-//     let webhook_secret = app_state.env.paystack_webhook_secret
-//         .as_ref()
-//         .ok_or_else(|| {
-//             HttpError::new(
-//                 StatusCode::INTERNAL_SERVER_ERROR,
-//                 "Paystack webhook secret not configured".to_string(),
-//             )
-//         })?;
+    Ok(Json(serde_json::json!({"status": "success"})))
+}
 
-//     // Verify HMAC signature
-//     if !verify_paystack_signature(&body, signature, webhook_secret) {
-//         return Err(HttpError::new(
-//             StatusCode::UNAUTHORIZED,
-//             "Invalid webhook signature".to_string(),
-//         ));
-//     }
+// Flutterwave Webhook Handler
+pub async fn flutterwave_webhook(
+    Extension(app_state): Extension<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, HttpError> {
+    // Verify webhook signature
+    let signature = headers
+        .get("verif-hash")
+        .and_then(|h| h.to_str().ok())
+        .ok_or_else(|| {
+            HttpError::new(
+                "Missing or invalid Flutterwave signature".to_string(),
+                StatusCode::BAD_REQUEST,
+            )
+        })?;
 
-//     // Process webhook event
-//     let event_type = body["event"]
-//         .as_str()
-//         .ok_or_else(|| {
-//             HttpError::new(
-//                 StatusCode::BAD_REQUEST,
-//                 "Missing event type in webhook payload".to_string(),
-//             )
-//         })?;
+    let webhook_secret: &String = &app_state.env.flutterwave_secret_key;
 
-//     let data = &body["data"];
+    // Verify signature
+    if signature != webhook_secret {
+        tracing::warn!("Invalid Flutterwave webhook signature received");
+        return Err(HttpError::new(
+            "Invalid webhook signature".to_string(),
+            StatusCode::UNAUTHORIZED,
+        ));
+    }
 
-//     match event_type {
-//         "charge.success" => {
-//             // Handle successful payment
-//             process_paystack_successful_payment(&app_state, data).await?;
-//         }
-//         "transfer.success" => {
-//             // Handle successful transfer
-//             process_paystack_successful_transfer(&app_state, data).await?;
-//         }
-//         "transfer.failed" => {
-//             // Handle failed transfer
-//             process_paystack_failed_transfer(&app_state, data).await?;
-//         }
-//         "transfer.reversed" => {
-//             // Handle reversed transfer
-//             process_paystack_reversed_transfer(&app_state, data).await?;
-//         }
-//         _ => {
-//             tracing::info!("Unhandled Paystack webhook event: {}", event_type);
-//         }
-//     }
+    // Process webhook event
+    let event_type = body["event"]
+        .as_str()
+        .ok_or_else(|| {
+            HttpError::new(
+                "Missing event type in webhook payload".to_string(),
+                StatusCode::BAD_REQUEST,
+            )
+        })?;
 
-//     Ok(Json(serde_json::json!({"status": "success"})))
-// }
+    let data = &body["data"];
 
-// // Flutterwave Webhook Handler
-// pub async fn flutterwave_webhook(
-//     Extension(app_state): Extension<Arc<AppState>>,
-//     headers: HeaderMap,
-//     Json(body): Json<serde_json::Value>,
-// ) -> Result<impl IntoResponse, HttpError> {
-//     // Verify webhook signature
-//     let signature = headers
-//         .get("verif-hash")
-//         .and_then(|h| h.to_str().ok())
-//         .ok_or_else(|| {
-//             HttpError::new(
-//                 StatusCode::BAD_REQUEST,
-//                 "Missing or invalid Flutterwave signature".to_string(),
-//             )
-//         })?;
+    match event_type {
+        "charge.completed" => {
+            process_flutterwave_completed_charge(&app_state, data).await?;
+        }
+        "transfer.completed" => {
+            process_flutterwave_completed_transfer(&app_state, data).await?;
+        }
+        "transfer.failed" => {
+            process_flutterwave_failed_transfer(&app_state, data).await?;
+        }
+        "transfer.reversed" => {
+            process_flutterwave_reversed_transfer(&app_state, data).await?;
+        }
+        _ => {
+            tracing::info!("Unhandled Flutterwave webhook event: {}", event_type);
+        }
+    }
 
-//     let webhook_secret = app_state.env.flutterwave_webhook_secret
-//         .as_ref()
-//         .ok_or_else(|| {
-//             HttpError::new(
-//                 StatusCode::INTERNAL_SERVER_ERROR,
-//                 "Flutterwave webhook secret not configured".to_string(),
-//             )
-//         })?;
+    Ok(Json(serde_json::json!({"status": "success"})))
+}
 
-//     // Verify signature
-//     if signature != webhook_secret {
-//         return Err(HttpError::new(
-//             StatusCode::UNAUTHORIZED,
-//             "Invalid webhook signature".to_string(),
-//         ));
-//     }
-
-//     // Process webhook event
-//     let event_type = body["event"]
-//         .as_str()
-//         .ok_or_else(|| {
-//             HttpError::new(
-//                 StatusCode::BAD_REQUEST,
-//                 "Missing event type in webhook payload".to_string(),
-//             )
-//         })?;
-
-//     let data = &body["data"];
-
-//     match event_type {
-//         "charge.completed" => {
-//             // Handle completed charge
-//             process_flutterwave_completed_charge(&app_state, data).await?;
-//         }
-//         "transfer.completed" => {
-//             // Handle completed transfer
-//             process_flutterwave_completed_transfer(&app_state, data).await?;
-//         }
-//         "transfer.failed" => {
-//             // Handle failed transfer
-//             process_flutterwave_failed_transfer(&app_state, data).await?;
-//         }
-//         "transfer.reversed" => {
-//             // Handle reversed transfer
-//             process_flutterwave_reversed_transfer(&app_state, data).await?;
-//         }
-//         _ => {
-//             tracing::info!("Unhandled Flutterwave webhook event: {}", event_type);
-//         }
-//     }
-
-//     Ok(Json(serde_json::json!({"status": "success"})))
-// }
-
-// // Paystack Helper Functions
-// fn verify_paystack_signature(payload: &Value, signature: &str, secret: &str) -> bool {
-//     use base64::Engine;
+// Paystack Helper Functions
+fn verify_paystack_signature(payload: &Value, signature: &str, secret: &str) -> bool {
+    let payload_string = payload.to_string();
     
-//     let payload_string = payload.to_string();
+    let mut mac = Hmac::<Sha512>::new_from_slice(secret.as_bytes())
+        .expect("HMAC can take key of any size");
+    mac.update(payload_string.as_bytes());
     
-//     let mut mac = Hmac::<Sha512>::new_from_slice(secret.as_bytes())
-//         .expect("HMAC can take key of any size");
-//     mac.update(payload_string.as_bytes());
+    let expected_signature = mac.finalize().into_bytes();
+    let expected_signature_hex = hex::encode(expected_signature);
     
-//     let expected_signature = mac.finalize().into_bytes();
-//     let expected_signature_hex = hex::encode(expected_signature);
-    
-//     // Compare signatures in constant time to prevent timing attacks
-//     subtle::ConstantTimeEq::ct_eq(
-//         signature.as_bytes(),
-//         expected_signature_hex.as_bytes(),
-//     ).into()
-// }
+    // Compare signatures in constant time to prevent timing attacks
+    ConstantTimeEq::ct_eq(
+        signature.as_bytes(),
+        expected_signature_hex.as_bytes(),
+    ).into()
+}
 
-// async fn process_paystack_successful_payment(
-//     app_state: &AppState,
-//     data: &Value,
-// ) -> Result<(), HttpError> {
-//     let reference = data["reference"]
-//         .as_str()
-//         .ok_or_else(|| HttpError::bad_request("Missing reference in webhook data"))?;
+async fn process_paystack_successful_payment(
+    app_state: &Arc<AppState>,
+    data: &Value,
+) -> Result<(), HttpError> {
+    let reference = data["reference"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Missing reference in webhook data"))?;
 
-//     let amount = data["amount"]
-//         .as_f64()
-//         .ok_or_else(|| HttpError::bad_request("Missing amount in webhook data"))?;
+    let amount = data["amount"]
+        .as_f64()
+        .ok_or_else(|| HttpError::bad_request("Missing amount in webhook data"))?;
 
-//     let gateway_reference = data["id"]
-//         .as_str()
-//         .map(|s| s.to_string());
+    let gateway_reference = data["id"]
+        .as_str()
+        .map(|s| s.to_string());
 
-//     // Convert amount from kobo to base unit
-//     let amount_kobo = amount as i64;
+    // Convert amount from kobo to your base unit (assuming amount is in kobo from Paystack)
+    let amount_kobo = amount as i64;
 
-//     // Find transaction by reference
-//     let transaction = app_state.db_client
-//         .get_transaction_by_reference(reference)
-//         .await
-//         .map_err(|e| HttpError::server_error(e.to_string()))?
-//         .ok_or_else(|| HttpError::not_found("Transaction not found"))?;
+    // Find transaction by reference
+    let transaction = app_state.db_client
+        .get_transaction_by_reference(reference)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| {
+            tracing::warn!("Transaction not found for reference: {}", reference);
+            HttpError::not_found("Transaction not found")
+        })?;
 
-//     // Only process if transaction is still pending
-//     if transaction.status != TransactionStatus::Pending {
-//         tracing::info!("Transaction {} already processed", reference);
-//         return Ok(());
-//     }
+    // Only process if transaction is still pending
+    if transaction.status != Some(TransactionStatus::Pending) {
+        tracing::info!("Transaction {} already processed with status: {:?}", reference, transaction.status);
+        return Ok(());
+    }
 
-//     // Update transaction status and credit wallet
-//     let updated_transaction = app_state.db_client
-//         .update_transaction_status(
-//             transaction.id,
-//             TransactionStatus::Completed,
-//             gateway_reference,
-//         )
-//         .await
-//         .map_err(|e| HttpError::server_error(e.to_string()))?;
+    // Update transaction status first
+    let updated_transaction = app_state.db_client
+        .update_transaction_status(
+            transaction.id,
+            TransactionStatus::Completed,
+            gateway_reference,
+        )
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-//     // Credit the wallet
-//     let _ = app_state.db_client
-//         .credit_wallet(
-//             transaction.user_id,
-//             amount_kobo,
-//             transaction.transaction_type,
-//             "Payment confirmed via Paystack".to_string(),
-//             reference.to_string(),
-//             Some(updated_transaction.external_reference.unwrap_or_default()),
-//             None,
-//         )
-//         .await
-//         .map_err(|e| HttpError::server_error(e.to_string()))?;
+    // Credit the wallet
+    let wallet_transaction = app_state.db_client
+        .credit_wallet(
+            transaction.user_id,
+            amount_kobo,
+            transaction.transaction_type,
+            "Payment confirmed via Paystack webhook".to_string(),
+            reference.to_string(),
+            updated_transaction.external_reference.clone(),
+            Some(serde_json::json!(data)),
+        )
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-//     tracing::info!("Successfully processed Paystack payment for reference: {}", reference);
-//     Ok(())
-// }
+    tracing::info!(
+        "Successfully processed Paystack payment for reference: {}, user: {}, amount: {}",
+        reference,
+        transaction.user_id,
+        amount_kobo
+    );
 
-// async fn process_paystack_successful_transfer(
-//     app_state: &AppState,
-//     data: &Value,
-// ) -> Result<(), HttpError> {
-//     let transfer_reference = data["reference"]
-//         .as_str()
-//         .ok_or_else(|| HttpError::bad_request("Missing reference in transfer data"))?;
+    Ok(())
+}
 
-//     let status = data["status"]
-//         .as_str()
-//         .ok_or_else(|| HttpError::bad_request("Missing status in transfer data"))?;
+async fn process_paystack_successful_transfer(
+    app_state: &Arc<AppState>,
+    data: &Value,
+) -> Result<(), HttpError> {
+    let transfer_reference = data["reference"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Missing reference in transfer data"))?;
 
-//     if status == "success" {
-//         tracing::info!("Transfer {} completed successfully", transfer_reference);
-//         // You might want to update any internal transfer records here
-//     }
+    let status = data["status"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Missing status in transfer data"))?;
 
-//     Ok(())
-// }
+    if status == "success" {
+        tracing::info!("Paystack transfer {} completed successfully", transfer_reference);
+        
+        // Update withdrawal transaction status if it exists
+        if let Some(transaction) = app_state.db_client
+            .get_transaction_by_reference(transfer_reference)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?
+        {
+            if transaction.status == Some(TransactionStatus::Pending) {
+                let _ = app_state.db_client
+                    .update_transaction_status(
+                        transaction.id,
+                        TransactionStatus::Completed,
+                        Some(transfer_reference.to_string()),
+                    )
+                    .await
+                    .map_err(|e| HttpError::server_error(e.to_string()))?;
+                
+                tracing::info!("Updated withdrawal transaction {} to success", transfer_reference);
+            }
+        }
+    }
 
-// async fn process_paystack_failed_transfer(
-//     app_state: &AppState,
-//     data: &Value,
-// ) -> Result<(), HttpError> {
-//     let transfer_reference = data["reference"]
-//         .as_str()
-//         .ok_or_else(|| HttpError::bad_request("Missing reference in transfer data"))?;
+    Ok(())
+}
 
-//     let reason = data["reason"]
-//         .as_str()
-//         .unwrap_or("Unknown reason");
+async fn process_paystack_failed_transfer(
+    app_state: &Arc<AppState>,
+    data: &Value,
+) -> Result<(), HttpError> {
+    let transfer_reference = data["reference"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Missing reference in transfer data"))?;
 
-//     tracing::warn!("Transfer {} failed: {}", transfer_reference, reason);
+    let reason = data["reason"]
+        .as_str()
+        .unwrap_or("Unknown reason");
 
-//     // Find the withdrawal transaction and mark it as failed
-//     if let Some(transaction) = app_state.db_client
-//         .get_transaction_by_reference(transfer_reference)
-//         .await
-//         .map_err(|e| HttpError::server_error(e.to_string()))?
-//     {
-//         if transaction.status == TransactionStatus::Pending {
-//             let _ = app_state.db_client
-//                 .update_transaction_status(
-//                     transaction.id,
-//                     TransactionStatus::Failed,
-//                     Some(format!("Transfer failed: {}", reason)),
-//                 )
-//                 .await
-//                 .map_err(|e| HttpError::server_error(e.to_string()))?;
+    tracing::warn!("Paystack transfer {} failed: {}", transfer_reference, reason);
 
-//             // Optionally refund the amount back to available balance
-//             // This would depend on your business logic
-//         }
-//     }
+    // Find the withdrawal transaction and mark it as failed
+    if let Some(transaction) = app_state.db_client
+        .get_transaction_by_reference(transfer_reference)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+    {
+        if transaction.status == Some(TransactionStatus::Pending) {
+            let _ = app_state.db_client
+                .update_transaction_status(
+                    transaction.id,
+                    TransactionStatus::Failed,
+                    Some(format!("Transfer failed: {}", reason)),
+                )
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-//     Ok(())
-// }
+            // Refund the amount back to available balance
+            let _ = app_state.db_client
+                .refund_transaction(transaction.id)
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-// async fn process_paystack_reversed_transfer(
-//     app_state: &AppState,
-//     data: &Value,
-// ) -> Result<(), HttpError> {
-//     let transfer_reference = data["reference"]
-//         .as_str()
-//         .ok_or_else(|| HttpError::bad_request("Missing reference in transfer data"))?;
+            tracing::info!("Refunded failed transfer {} for user {}", transfer_reference, transaction.user_id);
+        }
+    }
 
-//     tracing::info!("Transfer {} was reversed", transfer_reference);
+    Ok(())
+}
 
-//     // Handle transfer reversal - this might involve refunding the user
-//     // or updating internal records
+async fn process_paystack_reversed_transfer(
+    app_state: &Arc<AppState>,
+    data: &Value,
+) -> Result<(), HttpError> {
+    let transfer_reference = data["reference"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Missing reference in transfer data"))?;
 
-//     Ok(())
-// }
+    tracing::info!("Paystack transfer {} was reversed", transfer_reference);
 
-// // Flutterwave Helper Functions
-// async fn process_flutterwave_completed_charge(
-//     app_state: &AppState,
-//     data: &Value,
-// ) -> Result<(), HttpError> {
-//     let tx_ref = data["tx_ref"]
-//         .as_str()
-//         .ok_or_else(|| HttpError::bad_request("Missing tx_ref in webhook data"))?;
+    // Handle transfer reversal - refund the user
+    if let Some(transaction) = app_state.db_client
+        .get_transaction_by_reference(transfer_reference)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+    {
+        let _ = app_state.db_client
+            .refund_transaction(transaction.id)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-//     let amount = data["amount"]
-//         .as_f64()
-//         .ok_or_else(|| HttpError::bad_request("Missing amount in webhook data"))?;
+        tracing::info!("Refunded reversed transfer {} for user {}", transfer_reference, transaction.user_id);
+    }
 
-//     let flw_ref = data["flw_ref"]
-//         .as_str()
-//         .map(|s| s.to_string());
+    Ok(())
+}
 
-//     let status = data["status"]
-//         .as_str()
-//         .unwrap_or("");
+// Flutterwave Helper Functions
+async fn process_flutterwave_completed_charge(
+    app_state: &Arc<AppState>,
+    data: &Value,
+) -> Result<(), HttpError> {
+    let tx_ref = data["tx_ref"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Missing tx_ref in webhook data"))?;
 
-//     // Convert amount from naira to kobo
-//     let amount_kobo = (amount * 100.0) as i64;
+    let amount = data["amount"]
+        .as_f64()
+        .ok_or_else(|| HttpError::bad_request("Missing amount in webhook data"))?;
 
-//     if status == "successful" {
-//         // Find transaction by reference
-//         let transaction = app_state.db_client
-//             .get_transaction_by_reference(tx_ref)
-//             .await
-//             .map_err(|e| HttpError::server_error(e.to_string()))?
-//             .ok_or_else(|| HttpError::not_found("Transaction not found"))?;
+    let flw_ref = data["flw_ref"]
+        .as_str()
+        .map(|s| s.to_string());
 
-//         // Only process if transaction is still pending
-//         if transaction.status != TransactionStatus::Pending {
-//             tracing::info!("Transaction {} already processed", tx_ref);
-//             return Ok(());
-//         }
+    let status = data["status"]
+        .as_str()
+        .unwrap_or("");
 
-//         // Update transaction status and credit wallet
-//         let updated_transaction = app_state.db_client
-//             .update_transaction_status(
-//                 transaction.id,
-//                 TransactionStatus::Completed,
-//                 flw_ref,
-//             )
-//             .await
-//             .map_err(|e| HttpError::server_error(e.to_string()))?;
+    // Convert amount from naira to kobo (Flutterwave sends amount in Naira)
+    let amount_kobo = (amount * 100.0) as i64;
 
-//         // Credit the wallet
-//         let _ = app_state.db_client
-//             .credit_wallet(
-//                 transaction.user_id,
-//                 amount_kobo,
-//                 transaction.transaction_type,
-//                 "Payment confirmed via Flutterwave".to_string(),
-//                 tx_ref.to_string(),
-//                 Some(updated_transaction.external_reference.unwrap_or_default()),
-//                 None,
-//             )
-//             .await
-//             .map_err(|e| HttpError::server_error(e.to_string()))?;
+    if status == "successful" {
+        // Find transaction by reference
+        let transaction = app_state.db_client
+            .get_transaction_by_reference(tx_ref)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?
+            .ok_or_else(|| {
+                tracing::warn!("Transaction not found for reference: {}", tx_ref);
+                HttpError::not_found("Transaction not found")
+            })?;
 
-//         tracing::info!("Successfully processed Flutterwave payment for reference: {}", tx_ref);
-//     }
+        // Only process if transaction is still pending
+        if transaction.status != Some(TransactionStatus::Pending) {
+            tracing::info!("Transaction {} already processed", tx_ref);
+            return Ok(());
+        }
 
-//     Ok(())
-// }
+        // Update transaction status and credit wallet
+        let updated_transaction = app_state.db_client
+            .update_transaction_status(
+                transaction.id,
+                TransactionStatus::Completed,
+                flw_ref,
+            )
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-// async fn process_flutterwave_completed_transfer(
-//     app_state: &AppState,
-//     data: &Value,
-// ) -> Result<(), HttpError> {
-//     let reference = data["reference"]
-//         .as_str()
-//         .ok_or_else(|| HttpError::bad_request("Missing reference in transfer data"))?;
+        // Credit the wallet
+        let _ = app_state.db_client
+            .credit_wallet(
+                transaction.user_id,
+                amount_kobo,
+                transaction.transaction_type,
+                "Payment confirmed via Flutterwave webhook".to_string(),
+                tx_ref.to_string(),
+                updated_transaction.external_reference.clone(),
+                Some(serde_json::json!(data)),
+            )
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-//     let status = data["status"]
-//         .as_str()
-//         .unwrap_or("");
+        tracing::info!(
+            "Successfully processed Flutterwave payment for reference: {}, user: {}, amount: {}",
+            tx_ref,
+            transaction.user_id,
+            amount_kobo
+        );
+    }
 
-//     if status == "SUCCESSFUL" {
-//         tracing::info!("Flutterwave transfer {} completed successfully", reference);
-//         // Update internal transfer records if needed
-//     }
+    Ok(())
+}
 
-//     Ok(())
-// }
+async fn process_flutterwave_completed_transfer(
+    app_state: &Arc<AppState>,
+    data: &Value,
+) -> Result<(), HttpError> {
+    let transfer_reference = data["ref"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Missing ref in transfer data"))?;
 
-// async fn process_flutterwave_failed_transfer(
-//     app_state: &AppState,
-//     data: &Value,
-// ) -> Result<(), HttpError> {
-//     let reference = data["reference"]
-//         .as_str()
-//         .ok_or_else(|| HttpError::bad_request("Missing reference in transfer data"))?;
+    let status = data["status"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Missing status in transfer data"))?;
 
-//     let reason = data["complete_message"]
-//         .as_str()
-//         .unwrap_or("Unknown reason");
+    if status == "successful" {
+        tracing::info!("Flutterwave transfer {} completed successfully", transfer_reference);
+        
+        // Update withdrawal transaction status if it exists
+        if let Some(transaction) = app_state.db_client
+            .get_transaction_by_reference(transfer_reference)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?
+        {
+            if transaction.status == Some(TransactionStatus::Pending) {
+                let _ = app_state.db_client
+                    .update_transaction_status(
+                        transaction.id,
+                        TransactionStatus::Completed,
+                        Some(transfer_reference.to_string()),
+                    )
+                    .await
+                    .map_err(|e| HttpError::server_error(e.to_string()))?;
+                
+                tracing::info!("Updated withdrawal transaction {} to success", transfer_reference);
+            }
+        }
+    }
 
-//     tracing::warn!("Flutterwave transfer {} failed: {}", reference, reason);
+    Ok(())
+}
 
-//     // Find and update the failed withdrawal transaction
-//     if let Some(transaction) = app_state.db_client
-//         .get_transaction_by_reference(reference)
-//         .await
-//         .map_err(|e| HttpError::server_error(e.to_string()))?
-//     {
-//         if transaction.status == TransactionStatus::Pending {
-//             let _ = app_state.db_client
-//                 .update_transaction_status(
-//                     transaction.id,
-//                     TransactionStatus::Failed,
-//                     Some(format!("Transfer failed: {}", reason)),
-//                 )
-//                 .await
-//                 .map_err(|e| HttpError::server_error(e.to_string()))?;
-//         }
-//     }
+async fn process_flutterwave_failed_transfer(
+    app_state: &Arc<AppState>,
+    data: &Value,
+) -> Result<(), HttpError> {
+    let transfer_reference = data["ref"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Missing ref in transfer data"))?;
 
-//     Ok(())
-// }
+    let reason = data["complete_message"]
+        .as_str()
+        .unwrap_or("Unknown reason");
 
-// async fn process_flutterwave_reversed_transfer(
-//     app_state: &AppState,
-//     data: &Value,
-// ) -> Result<(), HttpError> {
-//     let reference = data["reference"]
-//         .as_str()
-//         .ok_or_else(|| HttpError::bad_request("Missing reference in transfer data"))?;
+    tracing::warn!("Flutterwave transfer {} failed: {}", transfer_reference, reason);
 
-//     tracing::info!("Flutterwave transfer {} was reversed", reference);
+    // Find the withdrawal transaction and mark it as failed
+    if let Some(transaction) = app_state.db_client
+        .get_transaction_by_reference(transfer_reference)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+    {
+        if transaction.status == Some(TransactionStatus::Pending) {
+            let _ = app_state.db_client
+                .update_transaction_status(
+                    transaction.id,
+                    TransactionStatus::Failed,
+                    Some(format!("Transfer failed: {}", reason)),
+                )
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-//     // Handle transfer reversal logic
-//     Ok(())
-// }
+            // Refund the amount back to available balance
+            let _ = app_state.db_client
+                .refund_transaction(transaction.id)
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-// // Add these to your Cargo.toml dependencies:
-// /*
-// [dependencies]
-// # ... existing dependencies ...
-// hmac = "0.12"
-// sha2 = "0.10"
-// base64 = "0.21"
-// subtle = "2.4"
-// */
+            tracing::info!("Refunded failed transfer {} for user {}", transfer_reference, transaction.user_id);
+        }
+    }
+
+    Ok(())
+}
+
+async fn process_flutterwave_reversed_transfer(
+    app_state: &Arc<AppState>,
+    data: &Value,
+) -> Result<(), HttpError> {
+    let transfer_reference = data["ref"]
+        .as_str()
+        .ok_or_else(|| HttpError::bad_request("Missing ref in transfer data"))?;
+
+    tracing::info!("Flutterwave transfer {} was reversed", transfer_reference);
+
+    // Handle transfer reversal - refund the user
+    if let Some(transaction) = app_state.db_client
+        .get_transaction_by_reference(transfer_reference)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+    {
+        let _ = app_state.db_client
+            .refund_transaction(transaction.id)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+        tracing::info!("Refunded reversed transfer {} for user {}", transfer_reference, transaction.user_id);
+    }
+
+    Ok(())
+}
