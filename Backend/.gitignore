@@ -3,3 +3,4 @@
 old
 db.rs.bak
 migration.sql
+/models
