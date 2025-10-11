@@ -46,6 +46,11 @@ pub trait NairaWalletExt {
         metadata: Option<JsonValue>
     ) -> Result<WalletTransaction, Error>;
 
+    async fn refund_transaction(
+        &self,
+        transaction_id: Uuid,
+    ) -> Result<WalletTransaction, Error>;
+
     // Transfer Operations
     async fn transfer_funds(
         &self,
@@ -165,6 +170,120 @@ pub struct WalletSummary {
 
 #[async_trait]
 impl NairaWalletExt for DBClient {
+    async fn refund_transaction(
+        &self,
+        transaction_id: Uuid,
+    ) -> Result<WalletTransaction, Error> {
+        let mut tx = self.pool.begin().await?;
+
+        // Get the original transaction
+        let original = sqlx::query_as!(
+            WalletTransaction,
+            r#"
+            SELECT 
+                id, 
+                wallet_id, 
+                user_id, 
+                transaction_type as "transaction_type: TransactionType",
+                amount, 
+                balance_before, 
+                balance_after, 
+                status as "status: TransactionStatus",
+                reference, 
+                external_reference, 
+                payment_method as "payment_method: PaymentMethod",
+                description, 
+                metadata, 
+                job_id, 
+                recipient_wallet_id, 
+                fee_amount,
+                created_at, 
+                updated_at, 
+                completed_at
+            FROM wallet_transactions
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+            transaction_id
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // Get current wallet balance
+        let wallet = sqlx::query!(
+            "SELECT id, balance, available_balance FROM naira_wallets WHERE id = $1 FOR UPDATE",
+            original.wallet_id
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let balance_before = wallet.balance;
+        let balance_after = balance_before + original.amount;
+        let available_after = wallet.available_balance + original.amount;
+
+        // Update wallet balance
+        sqlx::query!(
+            r#"
+            UPDATE naira_wallets 
+            SET balance = $2, 
+                available_balance = $3,
+                updated_at = NOW(),
+                last_activity_at = NOW()
+            WHERE id = $1
+            "#,
+            wallet.id,
+            balance_after,
+            available_after
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // Create refund transaction record
+        let refund = sqlx::query_as!(
+            WalletTransaction,
+            r#"
+            INSERT INTO wallet_transactions 
+            (wallet_id, user_id, transaction_type, amount, balance_before, balance_after, 
+             reference, external_reference, description, metadata, status)
+            VALUES ($1, $2, 'job_refund'::transaction_type, $3, $4, $5, $6, $7, $8, $9, 'completed'::transaction_status)
+            RETURNING 
+                id, 
+                wallet_id, 
+                user_id, 
+                transaction_type as "transaction_type: TransactionType",
+                amount, 
+                balance_before, 
+                balance_after, 
+                status as "status: TransactionStatus",
+                reference, 
+                external_reference, 
+                payment_method as "payment_method: PaymentMethod",
+                description, 
+                metadata, 
+                job_id, 
+                recipient_wallet_id, 
+                fee_amount,
+                created_at, 
+                updated_at, 
+                completed_at
+            "#,
+            original.wallet_id,
+            original.user_id,
+            original.amount,
+            balance_before,
+            balance_after,
+            format!("REFUND-{}", &original.reference),
+            original.external_reference,
+            format!("Refund for transaction {}", original.reference),
+            original.metadata
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(refund)
+    }
+
     async fn create_naira_wallet(&self, user_id: Uuid) -> Result<NairaWallet, Error> {
         sqlx::query_as!(
             NairaWallet,

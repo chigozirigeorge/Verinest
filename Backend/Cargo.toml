@@ -42,3 +42,5 @@ anyhow = "1.0"
 num-traits = "0.2"
 bigdecimal = { version = "0.4", features = ["serde"] }
 futures = "0.3.31"
+subtle = "2.4"
+hmac = "0.12"
