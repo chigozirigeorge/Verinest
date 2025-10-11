@@ -13,6 +13,13 @@ use crate::models::{
 
 #[async_trait]
 pub trait UserExt {
+    async fn update_user_verification_token<T: Into<String> + Send>(
+        &self,
+        user_id: Uuid,
+        verification_token: T,
+        token_expires_at: DateTime<Utc>,
+    ) -> Result<User, sqlx::Error>;
+
     async fn get_user(
         &self,
         user_id: Option<Uuid>,
@@ -198,6 +205,41 @@ pub trait UserExt {
 
 #[async_trait]
 impl UserExt for DBClient {
+    async fn update_user_verification_token<T: Into<String> + Send>(
+        &self,
+        user_id: Uuid,
+        verification_token: T,
+        token_expires_at: DateTime<Utc>,
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as!(
+            User,
+            r#"
+            UPDATE users 
+            SET verification_token = $2,
+                token_expires_at = $3,
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING 
+                id, name, username, email, password,
+                role as "role: UserRole",
+                trust_score, verified,
+                verification_type as "verification_type: VerificationType",
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status as "verification_status: VerificationStatus",
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at as "created_at!: DateTime<Utc>",
+                updated_at as "updated_at!: DateTime<Utc>"
+            "#,
+            user_id,
+            verification_token.into(),
+            token_expires_at,
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
     async fn get_available_verifiers(&self) -> Result<Vec<User>, sqlx::Error> {
         sqlx::query_as!(
             User,

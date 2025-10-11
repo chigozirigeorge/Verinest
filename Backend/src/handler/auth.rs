@@ -11,7 +11,7 @@ use crate::{
     db::userdb::UserExt, 
     dtos::userdtos::{
         FilterUserDto, ForgotPasswordRequestDto, 
-        LoginUserDto, RegisterUserWithReferralDto, 
+        LoginUserDto, RegisterUserWithReferralDto, ResendVerificationEmailDto,
         ResetPasswordRequestDto, Response, UserData, 
         UserLoginResponseDto, UserResponseDto, VerifyEmailQueryDto
     }, 
@@ -27,6 +27,7 @@ pub fn auth_handler() -> Router {
         .route("/register", post(register))
         .route("/login", post(login))
         .route("/verify", get(verify_email))
+        .route("/resend-verification", post(resend_verification_email))
         .route("/forgot-password", post(forgot_password))
         .route("/reset-password", post(reset_password))
 }
@@ -327,6 +328,48 @@ pub async fn reset_password(
 
     let response = Response {
         message: "Password has been successfully reset.".to_string(),
+        status: "success",
+    };
+
+    Ok(Json(response))
+}
+
+pub async fn resend_verification_email(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Json(body): Json<ResendVerificationEmailDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    // Find the user by email
+    let user = app_state.db_client
+        .get_user(None, None, Some(&body.email), None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    // Check if email is already verified
+    if user.verified {
+        return Err(HttpError::bad_request("Email is already verified"));
+    }
+
+    // Generate new verification token and update expiry
+    let verification_token = uuid::Uuid::new_v4().to_string();
+    let token_expires_at = Utc::now() + Duration::hours(24);
+
+    // Update user with new verification token
+    let updated_user = app_state.db_client
+        .update_user_verification_token(user.id, verification_token.clone(), token_expires_at)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Send verification email
+    send_verification_email(&updated_user.email, &updated_user.username, &verification_token)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let response = Response {
+        message: "Verification email resent successfully".to_string(),
         status: "success",
     };
 

@@ -1,5 +1,6 @@
 // handler/naira_wallet.rs
 use std::sync::Arc;
+use std::collections::HashMap;
 use axum::{
     http::{ HeaderMap, StatusCode},
     extract::{Path, Query},
@@ -36,6 +37,7 @@ pub fn naira_wallet_handler() -> Router {
         
         // Transactions
         .route("/deposit", post(initiate_deposit))
+        .route("/deposit/verify", get(handle_paystack_redirect))
         .route("/deposit/verify", post(verify_deposit))
         .route("/withdraw", post(withdraw_funds))
         .route("/transfer", post(transfer_funds))
@@ -193,6 +195,72 @@ pub async fn initiate_deposit(
         "Payment initialized successfully",
         payment_init,
     )))
+}
+
+pub async fn handle_paystack_redirect(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, HttpError> {
+    let reference = params.get("trxref")
+        .or_else(|| params.get("reference"))
+        .ok_or_else(|| HttpError::bad_request("No reference provided"))?;
+
+    tracing::info!("Paystack redirect received for reference: {}", reference);
+
+    // Verify the payment
+    let payment_service = PaymentProviderService::new(&app_state.env);
+    let verification = payment_service
+        .verify_payment(reference)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    if verification.status == "success" {
+        // Get transaction by reference
+        let transaction = app_state
+            .db_client
+            .get_transaction_by_reference(reference)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?
+            .ok_or_else(|| HttpError::not_found("Transaction not found"))?;
+
+        // Process payment if still pending
+        if transaction.status == Some(TransactionStatus::Pending) {
+            let _ = app_state
+                .db_client
+                .credit_wallet(
+                    transaction.user_id,
+                    verification.amount,
+                    TransactionType::Deposit,
+                    "Deposit via Paystack redirect".to_string(),
+                    reference.to_string(),
+                    Some(verification.gateway_reference),
+                    verification.metadata,
+                )
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?;
+        }
+
+            let app_url = &app_state.env.app_url;
+        // Redirect to frontend success page
+        let frontend_url = format!(
+            "{}/payment/success?reference={}",
+            app_url,
+            reference
+        );
+        
+        Ok(axum::response::Redirect::to(&frontend_url))
+    } else {
+        let app_url = &app_state.env.app_url;
+        // Redirect to frontend failure page
+        let frontend_url = format!(
+            "{}/payment/failed?reference={}&error={}",
+            app_url,
+            reference,
+            urlencoding::encode(&verification.gateway_reference)
+        );
+        
+        Ok(axum::response::Redirect::to(&frontend_url))
+    }
 }
 
 pub async fn verify_deposit(

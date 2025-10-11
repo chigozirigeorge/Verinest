@@ -38,6 +38,15 @@ pub struct RegisterUserWithReferralDto {
 }
 
 #[derive(Validate, Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ResendVerificationEmailDto {
+    #[validate(
+        length(min = 1, message = "Email is required"),
+        email(message = "Email is invalid")
+    )]
+    pub email: String,
+}
+
+#[derive(Validate, Debug, Default, Clone, Serialize, Deserialize)]
 pub struct LoginUserDto {
     #[validate(length(min = 1, message = "Email is required"), email(message = "Email is invalid"))]
     pub email: String,
