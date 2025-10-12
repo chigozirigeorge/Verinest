@@ -34,8 +34,6 @@ impl AuditService {
             Some(serde_json::json!({
                 "job_title": job.title,
                 "budget": job.budget,
-                "escrow_amount": escrow.amount,
-                "platform_fee": escrow.platform_fee
             })),
             "Job created without escrow".to_string(),
         ).await
