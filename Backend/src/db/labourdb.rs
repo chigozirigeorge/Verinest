@@ -78,6 +78,20 @@ pub trait LaborExt {
         status: JobStatus,
     ) -> Result<Vec<Job>, Error>;
 
+    async fn get_open_jobs(&self) -> Result<Vec<Job>, Error>;
+
+    async fn get_jobs_by_location(
+        &self,
+        state: &str,
+        status: JobStatus,
+    ) -> Result<Vec<Job>, Error>;
+
+    async fn get_jobs_by_category(
+        &self,
+        category: WorkerCategory,
+        status: JobStatus,
+    ) -> Result<Vec<Job>, Error>;
+
     async fn get_job_by_id(&self, job_id: Uuid) -> Result<Option<Job>, Error>;
 
     async fn update_job_status(
@@ -523,7 +537,107 @@ impl LaborExt for DBClient {
     .await
 }
 
-    async fn get_jobs_by_location_and_category(
+// In labourdb.rs - Update get_open_jobs and other methods
+// In labourdb.rs - Add these methods to the trait and implementation
+async fn get_jobs_by_location(
+    &self,
+    state: &str,
+    status: JobStatus,
+) -> Result<Vec<Job>, Error> {
+    sqlx::query_as!(
+        Job,
+        r#"
+        SELECT 
+            id, employer_id, 
+            assigned_worker_id,
+            category as "category: WorkerCategory",
+            title, description, 
+            location_state, location_city, location_address, 
+            budget,
+            estimated_duration_days, 
+            status as "status: JobStatus", 
+            payment_status as "payment_status: PaymentStatus", 
+            escrow_amount, platform_fee,
+            partial_payment_allowed, 
+            partial_payment_percentage,
+            created_at, updated_at, 
+            deadline
+        FROM jobs 
+        WHERE location_state = $1 AND status = $2
+        ORDER BY created_at DESC
+        "#,
+        state,
+        status as JobStatus
+    )
+    .fetch_all(&self.pool)
+    .await
+}
+
+async fn get_jobs_by_category(
+    &self,
+    category: WorkerCategory,
+    status: JobStatus,
+) -> Result<Vec<Job>, Error> {
+    sqlx::query_as!(
+        Job,
+        r#"
+        SELECT 
+            id, employer_id, 
+            assigned_worker_id,
+            category as "category: WorkerCategory",
+            title, description, 
+            location_state, location_city, location_address, 
+            budget,
+            estimated_duration_days, 
+            status as "status: JobStatus", 
+            payment_status as "payment_status: PaymentStatus", 
+            escrow_amount, platform_fee,
+            partial_payment_allowed, 
+            partial_payment_percentage,
+            created_at, updated_at, 
+            deadline
+        FROM jobs 
+        WHERE category = $1 AND status = $2
+        ORDER BY created_at DESC
+        "#,
+        category as WorkerCategory,
+        status as JobStatus
+    )
+    .fetch_all(&self.pool)
+    .await
+}
+
+
+async fn get_open_jobs(&self) -> Result<Vec<Job>, Error> {
+    sqlx::query_as!(
+        Job,
+        r#"
+        SELECT 
+            id, employer_id, 
+            assigned_worker_id,
+            category as "category: WorkerCategory",
+            title, description, 
+            location_state, location_city, location_address, 
+            budget,
+            estimated_duration_days, 
+            status as "status: JobStatus", 
+            payment_status as "payment_status: PaymentStatus", 
+            escrow_amount, platform_fee,
+            partial_payment_allowed, 
+            partial_payment_percentage,
+            created_at, updated_at, 
+            deadline
+        FROM jobs 
+        WHERE status = 'open'::job_status
+        ORDER BY created_at DESC
+        "#,
+    )
+    .fetch_all(&self.pool)
+    .await
+}
+
+// Also update the other methods to use the same WHERE clause
+async fn get_jobs_by_location_and_category(
     &self,
     state: &str,
     category: WorkerCategory,
@@ -548,16 +662,51 @@ impl LaborExt for DBClient {
             created_at, updated_at, 
             deadline
         FROM jobs 
-        WHERE location_state = $1 AND category = $2 AND status = $3
+        WHERE location_state = $1 AND category = $2 AND status = 'open'::job_status
         ORDER BY created_at DESC
         "#,
         state,
-        category as WorkerCategory,
-        status as JobStatus
+        category as WorkerCategory
     )
     .fetch_all(&self.pool)
     .await
 }
+
+//     async fn get_jobs_by_location_and_category(
+//     &self,
+//     state: &str,
+//     category: WorkerCategory,
+//     status: JobStatus,
+// ) -> Result<Vec<Job>, Error> {
+//     sqlx::query_as!(
+//         Job,
+//         r#"
+//         SELECT 
+//             id, employer_id, 
+//             assigned_worker_id,
+//             category as "category: WorkerCategory",
+//             title, description, 
+//             location_state, location_city, location_address, 
+//             budget,
+//             estimated_duration_days, 
+//             status as "status: JobStatus", 
+//             payment_status as "payment_status: PaymentStatus", 
+//             escrow_amount, platform_fee,
+//             partial_payment_allowed, 
+//             partial_payment_percentage,
+//             created_at, updated_at, 
+//             deadline
+//         FROM jobs 
+//         WHERE location_state = $1 AND category = $2 AND status = $3
+//         ORDER BY created_at DESC
+//         "#,
+//         state,
+//         category as WorkerCategory,
+//         status as JobStatus
+//     )
+//     .fetch_all(&self.pool)
+//     .await
+// }
 
 
    async fn get_job_by_id(&self, job_id: Uuid) -> Result<Option<Job>, Error> {

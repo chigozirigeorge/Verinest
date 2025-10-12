@@ -578,21 +578,68 @@ pub async fn get_worker_portfolio(
 }
 
 // Job Search and Listing Handlers
+// In labour.rs - Add detailed debugging
 pub async fn search_jobs(
-    Query(params): Query<SearchJobsDto>,
     Extension(app_state): Extension<Arc<AppState>>,
-) -> Result<Json<Vec<Job>>, HttpError> {
-    let jobs = if let (Some(state), Some(category)) = (&params.location_state, params.category) {
-        app_state
-            .db_client
-            .get_jobs_by_location_and_category(state, category, JobStatus::Open)
+    Query(params): Query<SearchJobsDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    params.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    println!("🔍 Search jobs called with params: {:?}", params);
+
+    // Debug: Check what happens with each query method
+    let jobs_result = if let Some(state) = &params.location_state {
+        if let Some(category) = params.category {
+            println!("🔍 Calling get_jobs_by_location_and_category: state={}, category={:?}", state, category);
+            app_state.db_client
+                .get_jobs_by_location_and_category(state, category, JobStatus::Open)
+                .await
+        } else {
+            println!("🔍 Calling get_jobs_by_location: state={}", state);
+            app_state.db_client
+                .get_jobs_by_location(state, JobStatus::Open)
+                .await
+        }
+    } else if let Some(category) = params.category {
+        println!("🔍 Calling get_jobs_by_category: category={:?}", category);
+        app_state.db_client
+            .get_jobs_by_category(category, JobStatus::Open)
             .await
-            .map_err(|e| HttpError::server_error(e.to_string()))?
     } else {
-        vec![] // Return empty if no filters provided
+        println!("🔍 Calling get_open_jobs");
+        app_state.db_client
+            .get_open_jobs()
+            .await
     };
 
-    Ok(Json(jobs))
+    let jobs = match jobs_result {
+        Ok(jobs) => {
+            println!("✅ Database query successful, found {} jobs", jobs.len());
+            jobs
+        }
+        Err(e) => {
+            println!("❌ Database query failed: {}", e);
+            return Err(HttpError::server_error(e.to_string()));
+        }
+    };
+
+    // Debug each job
+    println!("📋 Jobs details:");
+    for (i, job) in jobs.iter().enumerate() {
+        println!("  {}. ID: {}", i + 1, job.id);
+        println!("     Title: {}", job.title);
+        println!("     Category: {:?}", job.category);
+        println!("     Status: {:?}", job.status);
+        println!("     State: {}", job.location_state);
+        println!("     City: {}", job.location_city);
+    }
+
+    Ok(Json(ApiResponse {
+        status: "success".to_string(),
+        message: "Jobs retrieved successfully".to_string(),
+        data: jobs,
+    }))
 }
 
 pub async fn get_job_details(
