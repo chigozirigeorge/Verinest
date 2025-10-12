@@ -638,7 +638,7 @@ pub async fn search_jobs(
     Ok(Json(ApiResponse {
         status: "success".to_string(),
         message: "Jobs retrieved successfully".to_string(),
-        data: jobs,
+        data: Some(jobs),
     }))
 }
 
