@@ -379,7 +379,12 @@ pub struct SearchJobsDto {
     pub limit: Option<u32>,
 }
 
-
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JobsResponse {
+    pub status: String,
+    pub message: String,
+    pub data: Vec<Job>, // Direct array, no Option
+}
 
 //Response wrappers
 #[derive(Debug, Serialize, Deserialize)]
