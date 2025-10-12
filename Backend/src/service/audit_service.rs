@@ -25,7 +25,6 @@ impl AuditService {
         &self,
         employer_id: Uuid,
         job: &Job,
-        escrow: &EscrowTransaction,
     ) -> Result<(), ServiceError> {
         self.log_audit_event(
             employer_id,
@@ -38,7 +37,7 @@ impl AuditService {
                 "escrow_amount": escrow.amount,
                 "platform_fee": escrow.platform_fee
             })),
-            "Job created with escrow".to_string(),
+            "Job created without escrow".to_string(),
         ).await
     }
 

@@ -199,7 +199,7 @@ pub async fn create_job(
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     Ok(Json(ApiResponse::success(
-        "Job created successfully with escrow",
+        "Job created successfully",
         result,
     )))
 }
@@ -291,6 +291,12 @@ pub async fn apply_to_job(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+     let _ = app_state.notification_service.notify_job_application(
+        job.employer_id,
+        &job,
+        "Applicant", // You might want to fetch user name
+    ).await;
+
     Ok(Json(ApiResponse::success(
         "Application submitted successfully",
         application,
@@ -340,6 +346,15 @@ pub async fn assign_worker_to_job(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+    let job = app_state.db_client
+        .get_job_by_id(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+    let _ = app_state.notification_service.notify_job_assigned_to_worker(worker_id, &job)
+        .await;
+
     Ok(Json(ApiResponse::success(
         "Worker assigned successfully",
         result,
@@ -377,7 +392,7 @@ pub async fn create_job_contract(
         )
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
-
+        
     Ok(Json(ApiResponse::success(
         "Job contract created successfully",
         contract,

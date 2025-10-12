@@ -87,10 +87,10 @@ pub trait LaborExt {
     ) -> Result<Job, Error>;
 
     async fn assign_worker_to_job(
-        &self,
-        job_id: Uuid,
-        worker_id: Uuid
-    ) -> Result<Job, Error>;
+    &self,
+    job_id: Uuid,
+    worker_id: Uuid
+) -> Result<(Job, EscrowTransaction), Error>;
 
     //Job application
     async fn create_job_application(
@@ -613,12 +613,16 @@ impl LaborExt for DBClient {
     }
 
 
-    async fn assign_worker_to_job(
-        &self,
-        job_id: Uuid,
-        worker_id: Uuid
-    ) -> Result<Job, Error> {
-    sqlx::query_as!(
+    // In labourdb.rs - Update assign_worker_to_job method
+async fn assign_worker_to_job(
+    &self,
+    job_id: Uuid,
+    worker_id: Uuid
+) -> Result<(Job, EscrowTransaction), Error> {
+    let mut tx = self.pool.begin().await?;
+
+    // First update the job
+    let job = sqlx::query_as!(
         Job,
         r#"
         UPDATE jobs 
@@ -643,8 +647,30 @@ impl LaborExt for DBClient {
         job_id,
         worker_id
     )
-    .fetch_one(&self.pool)
-    .await
+    .fetch_one(&mut *tx)
+    .await?;
+
+    // Now create the escrow transaction with the assigned worker
+    let escrow = sqlx::query_as!(
+        EscrowTransaction,
+        r#"
+        INSERT INTO escrow_transactions 
+        (job_id, employer_id, worker_id, amount, platform_fee, status)
+        VALUES ($1, $2, $3, $4, $5, 'escrowed'::payment_status)
+        RETURNING id, job_id, employer_id, worker_id, amount, platform_fee,
+        status as "status: PaymentStatus", transaction_hash, created_at, released_at
+        "#,
+        job_id,
+        job.employer_id,
+        worker_id,
+        job.escrow_amount,
+        job.platform_fee
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok((job, escrow))
 }
 
     async fn create_job_application(

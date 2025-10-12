@@ -291,6 +291,136 @@ impl NotificationService {
 
         Ok(())
     }
+
+    // In notification_service.rs - Add new notification methods
+pub async fn notify_job_application(
+    &self,
+    employer_id: Uuid,
+    job: &Job,
+    applicant_name: &str,
+) -> Result<(), ServiceError> {
+    tracing::info!(
+        "Job application notification: employer {} received application for job {}",
+        employer_id,
+        job.id
+    );
+
+    self.store_notification(
+        Some(employer_id),
+        "job_application".to_string(),
+        Some(job.id),
+        Some(serde_json::json!({
+            "job_title": job.title,
+            "applicant_name": applicant_name,
+            "job_id": job.id
+        })),
+        format!("New application received for job: {}", job.title),
+    ).await
+}
+
+pub async fn notify_job_assigned_to_worker(
+    &self,
+    worker_id: Uuid,
+    job: &Job,
+) -> Result<(), ServiceError> {
+    tracing::info!(
+        "Job assignment notification: worker {} assigned to job {}",
+        worker_id,
+        job.id
+    );
+
+    self.store_notification(
+        Some(worker_id),
+        "job_assigned".to_string(),
+        Some(job.id),
+        Some(serde_json::json!({
+            "job_title": job.title,
+            "employer_id": job.employer_id,
+            "escrow_created": true
+        })),
+        format!("You've been assigned to job: {}", job.title),
+    ).await
+}
+
+pub async fn notify_employer_worker_assigned(
+    &self,
+    employer_id: Uuid,
+    job: &Job,
+    worker_profile: &WorkerProfile,
+) -> Result<(), ServiceError> {
+    tracing::info!(
+        "Worker assignment notification: employer {} assigned worker to job {}",
+        employer_id,
+        job.id
+    );
+
+    self.store_notification(
+        Some(employer_id),
+        "worker_assigned".to_string(),
+        Some(job.id),
+        Some(serde_json::json!({
+            "job_title": job.title,
+            "worker_name": "Worker", // You might want to fetch worker name
+            "worker_category": worker_profile.category.to_str(),
+            "escrow_created": true
+        })),
+        format!("Worker assigned to your job: {}", job.title),
+    ).await
+}
+
+pub async fn notify_contract_awaiting_signature(
+    &self,
+    user_id: Uuid,
+    contract: &JobContract,
+) -> Result<(), ServiceError> {
+    tracing::info!(
+        "Contract signature notification: user {} needs to sign contract {}",
+        user_id,
+        contract.id
+    );
+
+    let user_type = if user_id == contract.employer_id {
+        "employer"
+    } else {
+        "worker"
+    };
+
+    self.store_notification(
+        Some(user_id),
+        "contract_pending_signature".to_string(),
+        Some(contract.job_id),
+        Some(serde_json::json!({
+            "contract_id": contract.id,
+            "user_type": user_type,
+            "agreed_rate": contract.agreed_rate
+        })),
+        format!("Contract awaiting your signature - please review and sign"),
+    ).await
+}
+
+pub async fn notify_dispute_against_user(
+    &self,
+    user_id: Uuid,
+    dispute: &Dispute,
+    raised_by_name: &str,
+) -> Result<(), ServiceError> {
+    tracing::info!(
+        "Dispute notification: user {} has dispute raised against them",
+        user_id
+    );
+
+    self.store_notification(
+        Some(user_id),
+        "dispute_raised_against".to_string(),
+        Some(dispute.job_id),
+        Some(serde_json::json!({
+            "dispute_id": dispute.id,
+            "raised_by": raised_by_name,
+            "reason": dispute.reason
+        })),
+        format!("Dispute raised against you: {}", dispute.reason),
+    ).await
+}
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
