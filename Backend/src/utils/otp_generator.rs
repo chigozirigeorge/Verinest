@@ -2,15 +2,15 @@
 use rand::Rng;
 
 pub fn generate_otp() -> String {
-    let mut rng = rand::thread_rng();
-    format!("{:06}", rng.gen_range(100000..999999))
+    let mut rng = rand::rng();
+    format!("{:06}", rng.random_range(100000..999999))
 }
 
 pub fn generate_secure_otp() -> String {
-    use rand::distributions::Alphanumeric;
-    use rand::{thread_rng, Rng};
+    use rand::distr::Alphanumeric;
+    use rand::{rng, Rng};
     
-    let mut rng = thread_rng();
+    let mut rng = rng();
     (0..8)
         .map(|_| rng.sample(Alphanumeric) as char)
         .collect()

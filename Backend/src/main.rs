@@ -31,6 +31,7 @@ use service::{
     notification_service::NotificationService,
     audit_service::AuditService,
     matching_service::MatchingService,
+    verification_service::VerificationService,
 };
 
 #[derive(Debug, Clone)]

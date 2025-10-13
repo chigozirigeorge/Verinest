@@ -1,6 +1,7 @@
 // models/verificationmodels.rs
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::Type;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -56,11 +57,11 @@ pub struct VerificationDocument {
     pub document_id: String,
     pub document_url: String,
     pub selfie_url: String,
-    pub status: VerificationStatus,
+    pub status: Option<VerificationStatus>,
     pub reviewed_by: Option<Uuid>,
     pub review_notes: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -71,14 +72,16 @@ pub struct VerificationResponse {
     pub estimated_completion_time: Option<i32>, // hours
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Validate)]
 pub struct OtpRequest {
     #[validate(email(message = "Valid email is required"))]
     pub email: String,
     pub purpose: OtpPurpose,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+// Remove the manual Encode implementation - SQLx derives it automatically
+#[derive(Debug, Deserialize, Serialize, Clone, sqlx::Type)]
+#[sqlx(type_name = "otp_purpose", rename_all = "snake_case")]
 pub enum OtpPurpose {
     AccountVerification,
     PasswordReset,
@@ -105,9 +108,9 @@ pub struct OtpRecord {
     pub email: String,
     pub otp_code: String,
     pub purpose: OtpPurpose,
-    pub expires_at: DateTime<Utc>,
-    pub used: bool,
-    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub used: Option<bool>,
+    pub created_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

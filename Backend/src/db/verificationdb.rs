@@ -7,10 +7,7 @@ use super::db::DBClient;
 
 use crate::models::{
     usermodel::{VerificationStatus, VerificationType},
-    verificationmodels::{
-        DocumentVerificationRequest, FacialVerificationRequest, NinVerificationRequest, 
-        OtpRecord, OtpPurpose, VerificationDocument, VerificationResponse
-    },
+    verificationmodels::*,
 };
 
 #[async_trait]

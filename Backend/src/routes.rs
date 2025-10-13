@@ -122,10 +122,14 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .merge(public_labour_routes)
         .merge(protected_labour_routes);
 
+    // Create verification routes with auth middleware
+    let verification_routes = verification_handler()
+        .layer(middleware::from_fn(auth));
+
     let api_route = Router::new()
         .nest("/auth", auth_handler())
         .nest("/oauth", oauth_handler())
-        .nest("/verification", verification_routes)
+        .nest("/verification", verification_routes) // Use the created verification_routes
         .nest(
             "/users", 
             users_handler()

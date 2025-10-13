@@ -3,8 +3,13 @@ use std::sync::Arc;
 use tokio::time::{interval, Duration};
 use tracing::info;
 
-use crate::db::verificationdb::VerificationExt;
+use crate::{db::{
+    db::DBClient,
+    verificationdb::VerificationExt
+    }
+};
 
+#[derive(Debug, Clone)]
 pub struct VerificationService {
     db_client: Arc<DBClient>,
 }

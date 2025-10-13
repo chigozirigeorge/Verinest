@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Multipart, Path},
+    extract::{Path},
     response::IntoResponse,
     routing::{get, post, put},
     Extension, Json, Router,
@@ -131,8 +131,8 @@ pub async fn submit_nin_verification(
             auth.user.id,
             VerificationType::NationalId,
             body.nin_number.clone(),
-            document_url,
-            selfie_url,
+            body.document_url.clone(),
+            body.selfie_url.clone(),
         )
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
@@ -143,9 +143,9 @@ pub async fn submit_nin_verification(
             auth.user.id,
             VerificationStatus::Submitted,
             Some(body.nin_number.clone()), // Store NIN as verification_number
-            Some(VerificationType::NationalId),
-            Some(document_url.clone()), // Store document URL
-            Some(selfie_url.clone()),   // Store selfie URL
+            VerificationType::NationalId,
+            Some(body.document_url.clone()), // Store document URL
+            Some(body.selfie_url.clone()),   // Store selfie URL
             Some(body.nationality.clone()),
             body.dob,
             body.lga.clone(),
@@ -188,8 +188,8 @@ pub async fn submit_document_verification(
             auth.user.id,
             body.verification_type,
             body.document_id.clone(),
-            document_url,
-            selfie_url,
+            body.document_url.clone(),
+            body.selfie_url.clone(),
         )
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
@@ -200,9 +200,9 @@ pub async fn submit_document_verification(
             auth.user.id,
             VerificationStatus::Submitted,
             Some(body.document_id.clone()), // Store document ID as verification_number
-            Some(body.verification_type),
-            Some(document_url.clone()), // Store document URL
-            Some(selfie_url.clone()),   // Store selfie URL
+            body.verification_type,
+            Some(body.document_url.clone()), // Store document URL
+            Some(body.selfie_url.clone()),   // Store selfie URL
             Some(body.nationality.clone()),
             body.dob,
             body.lga.clone(),
@@ -323,7 +323,7 @@ pub async fn review_verification(
                         verification.user_id,
                         VerificationStatus::Approved,
                         Some(verification.document_id.clone()), // NIN number
-                        Some(verification.document_type),
+                        verification.document_type,
                         Some(verification.document_url.clone()),
                         Some(verification.selfie_url.clone()),
                         None, // nationality - we'll need to get this from the original submission
@@ -341,7 +341,7 @@ pub async fn review_verification(
                         verification.user_id,
                         VerificationStatus::Approved,
                         Some(verification.document_id.clone()), // Document ID
-                        Some(verification.document_type),
+                        verification.document_type,
                         Some(verification.document_url.clone()),
                         Some(verification.selfie_url.clone()),
                         None, // nationality

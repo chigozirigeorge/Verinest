@@ -15,6 +15,8 @@ pub enum UserRole {
     Whistleblower,
     CustomerCare,
     Dev,
+    Worker,
+    Employer,
     User
 }
 
@@ -32,6 +34,8 @@ impl UserRole {
             UserRole::Whistleblower => "whistleblower",
             UserRole::CustomerCare => "customer_care",
             UserRole::Dev => "dev",
+            UserRole::Worker => "worker",
+            UserRole::Employer => "employer"
         }
     }
 }
@@ -54,7 +58,7 @@ impl VerificationType {
     }
 }
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, sqlx::Type, PartialEq)]
-#[sqlx(type_name = "verification_type", rename_all = "snake_case")]
+#[sqlx(type_name = "verification_status", rename_all = "snake_case")]
 pub enum VerificationStatus {
     Pending,
     Submitted,

@@ -5,7 +5,7 @@ use validator::Validate;
 
 use crate::models::{
     usermodel::{VerificationStatus, VerificationType},
-    verificationmodels::OtpPurpose,
+    verificationmodels::*,
 };
 
 #[derive(Validate, Debug, Clone, Serialize, Deserialize)]
