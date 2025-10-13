@@ -1,5 +1,6 @@
 //11
 use super::sendmail::send_email;
+use crate::{models::verificationmodels::OtpPurpose};
 
 pub async fn send_verification_email(
     to_email: &str,
@@ -45,6 +46,28 @@ pub async fn send_forgot_password_email(
     let placeholders = vec![
         ("{{username}}".to_string(), username.to_string()),
         ("{{rest_link}}".to_string(), rest_link.to_string())
+    ];
+
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
+pub async fn send_otp_email(
+    to_email: &str,
+    otp_code: &str,
+    purpose: &OtpPurpose,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = match purpose {
+        OtpPurpose::AccountVerification => "Account Verification OTP",
+        OtpPurpose::PasswordReset => "Password Reset OTP",
+        OtpPurpose::Transaction => "Transaction Verification OTP",
+        OtpPurpose::VerificationUpdate => "Verification Update OTP",
+        OtpPurpose::SensitiveAction => "Security Verification OTP",
+    };
+
+    let template_path = "src/mail/templates/OTP-email.html";
+    let placeholders = vec![
+        ("{{otp_code}}".to_string(), otp_code.to_string()),
+        ("{{purpose}}".to_string(), format!("{:?}", purpose)),
     ];
 
     send_email(to_email, subject, template_path, &placeholders).await

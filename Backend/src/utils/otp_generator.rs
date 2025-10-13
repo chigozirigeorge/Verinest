@@ -1,0 +1,17 @@
+// utils/otp_generator.rs
+use rand::Rng;
+
+pub fn generate_otp() -> String {
+    let mut rng = rand::thread_rng();
+    format!("{:06}", rng.gen_range(100000..999999))
+}
+
+pub fn generate_secure_otp() -> String {
+    use rand::distributions::Alphanumeric;
+    use rand::{thread_rng, Rng};
+    
+    let mut rng = thread_rng();
+    (0..8)
+        .map(|_| rng.sample(Alphanumeric) as char)
+        .collect()
+}

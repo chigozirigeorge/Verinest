@@ -201,6 +201,26 @@ pub trait UserExt {
         verifier_id: Uuid
     ) -> Result<(), sqlx::Error>;
 
+   async fn update_user_verification_data(
+        &self,
+        user_id: Uuid,
+        verification_status: VerificationStatus,
+        verification_number: Option<String>,
+        verification_type: Option<VerificationType>,
+        verification_document_id: Option<String>,
+        facial_verification_id: Option<String>,
+        nationality: Option<String>,
+        dob: Option<DateTime<Utc>>,
+        lga: Option<String>,
+        nearest_landmark: Option<String>,
+    ) -> Result<User, sqlx::Error>;
+
+    /// Get user by verification document ID (to check for duplicates)
+    async fn get_user_by_verification_number(
+        &self,
+        verification_number: &str,
+    ) -> Result<Option<User>, sqlx::Error>; 
+
 }
 
 #[async_trait]
@@ -1137,4 +1157,89 @@ impl UserExt for DBClient {
     Ok(())
     }
 
+    async fn update_user_verification_data(
+        &self,
+        user_id: Uuid,
+        verification_status: VerificationStatus,
+        verification_number: Option<String>,
+        verification_type: Option<VerificationType>,
+        verification_document_id: Option<String>,
+        facial_verification_id: Option<String>,
+        nationality: Option<String>,
+        dob: Option<DateTime<Utc>>,
+        lga: Option<String>,
+        nearest_landmark: Option<String>,
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as!(
+            User,
+            r#"
+            UPDATE users 
+            SET 
+                verification_status = $2,
+                verification_number = COALESCE($3, verification_number),
+                verification_type = COALESCE($4, verification_type),
+                verification_document_id = COALESCE($5, verification_document_id),
+                facial_verification_id = COALESCE($6, facial_verification_id),
+                nationality = COALESCE($7, nationality),
+                dob = COALESCE($8, dob),
+                lga = COALESCE($9, lga),
+                nearest_landmark = COALESCE($10, nearest_landmark),
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING 
+                id, name, username, email, password,
+                role as "role: UserRole",
+                trust_score, verified,
+                verification_type as "verification_type: VerificationType",
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status as "verification_status: VerificationStatus",
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at as "created_at!: DateTime<Utc>",
+                updated_at as "updated_at!: DateTime<Utc>"
+            "#,
+            user_id,
+            verification_status as VerificationStatus,
+            verification_number,
+            verification_type.map(|vt| vt as VerificationType),
+            verification_document_id,
+            facial_verification_id,
+            nationality,
+            dob,
+            lga,
+            nearest_landmark,
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    async fn get_user_by_verification_number(
+        &self,
+        verification_number: &str,
+    ) -> Result<Option<User>, sqlx::Error> {
+        sqlx::query_as!(
+            User,
+            r#"
+            SELECT 
+                id, name, username, email, password,
+                role as "role: UserRole", trust_score, verified,
+                verification_type as "verification_type: VerificationType",
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status as "verification_status: VerificationStatus",
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at as "created_at!: DateTime<Utc>", 
+                updated_at as "updated_at!: DateTime<Utc>"
+            FROM users 
+            WHERE verification_number = $1 
+                OR nin_number = $1
+            "#,
+            verification_number
+        )
+        .fetch_optional(&self.pool)
+        .await
+    }
+}
 }

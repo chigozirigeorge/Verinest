@@ -22,7 +22,8 @@ use crate::{
             paystack_webhook,
             flutterwave_webhook
         }, 
-        users::users_handler
+        users::users_handler,
+        verification::verification_handler,
     }, 
     middleware::auth, 
     AppState
@@ -124,6 +125,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
     let api_route = Router::new()
         .nest("/auth", auth_handler())
         .nest("/oauth", oauth_handler())
+        .nest("/verification", verification_routes)
         .nest(
             "/users", 
             users_handler()

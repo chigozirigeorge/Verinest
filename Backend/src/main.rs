@@ -45,6 +45,7 @@ pub struct AppState {
     pub notification_service: Arc<NotificationService>,
     pub audit_service: Arc<AuditService>,
     pub matching_service: Arc<MatchingService>,
+    pub verification_service: Arc<VerificationService>,
 }
 
 impl AppState {
@@ -57,6 +58,12 @@ impl AppState {
         let audit_service = Arc::new(AuditService::new(db_client_arc.clone()));
         let matching_service = Arc::new(MatchingService::new(db_client_arc.clone()));
         let escrow_service = Arc::new(EscrowService::new(db_client_arc.clone()));
+        let verification_service = Arc::new(VerificationService::new(db_client_arc.clone()));
+
+        let verification_service_clone = verification_service.clone();
+        tokio::spawn(async move {
+            verification_service_clone.start_cleanup_task().await;
+        });
 
         let labour_service = Arc::new(LabourService::new(
             db_client_arc.clone(),
@@ -84,6 +91,7 @@ impl AppState {
             notification_service,
             audit_service,
             matching_service,
+            verification_service,
         }
     }
 }

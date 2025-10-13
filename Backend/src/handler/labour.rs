@@ -250,16 +250,6 @@ pub async fn search_jobs(
         }
     };
 
-    // Debug each job
-    println!("📋 Jobs details:");
-    for (i, job) in jobs.iter().enumerate() {
-        println!("  {}. ID: {}", i + 1, job.id);
-        println!("     Title: {}", job.title);
-        println!("     Category: {:?}", job.category);
-        println!("     Status: {:?}", job.status);
-        println!("     State: {}", job.location_state);
-        println!("     City: {}", job.location_city);
-    }
 
     Ok(Json(JobsResponse {
         status: "success".to_string(),

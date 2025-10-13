@@ -11,3 +11,4 @@ pub mod notification_service;
 pub mod audit_service;
 pub mod matching_service;
 pub mod trust_service;
+pub mod verification_service;
