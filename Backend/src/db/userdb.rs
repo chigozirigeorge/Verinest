@@ -1242,4 +1242,3 @@ impl UserExt for DBClient {
         .await
     }
 }
-}
