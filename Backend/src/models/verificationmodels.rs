@@ -21,10 +21,8 @@ pub struct NinVerificationRequest {
     pub lga: Option<String>,
     pub nearest_landmark: Option<String>,
     
-    // Document image (base64 encoded)
     pub document_image: String,
     
-    // Selfie image (base64 encoded)
     pub selfie_image: String,
 }
 
@@ -42,10 +40,8 @@ pub struct DocumentVerificationRequest {
     pub lga: Option<String>,
     pub nearest_landmark: Option<String>,
     
-    // Document image (base64 encoded)
     pub document_image: String,
-    
-    // Selfie image (base64 encoded)
+
     pub selfie_image: String,
 }
 

@@ -251,3 +251,32 @@ impl FilterUserBoard {
         user.iter().map(FilterUserBoard::filter_user).collect()
     }
 }
+
+// dtos/userdtos.rs - Add these new DTOs
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct UpgradeRoleDto {
+    pub target_user_id: Uuid,
+    
+    #[validate(custom = "validate_upgrade_role")]
+    pub new_role: UserRole,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RoleInfo {
+    pub role: UserRole,
+    pub name: String,
+    pub description: String,
+    pub requires_verification: bool,
+}
+
+// Validation function for self-upgrade roles
+fn validate_upgrade_role(role: &UserRole) -> Result<(), validator::ValidationError> {
+    match role {
+        UserRole::Worker | UserRole::Employer => Ok(()),
+        _ => {
+            let mut err = validator::ValidationError::new("invalid_upgrade_role");
+            err.add_param("expected", &"Worker or Employer");
+            Err(err)
+        }
+    }
+}

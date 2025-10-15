@@ -39,7 +39,6 @@ pub struct NinVerificationDto {
     pub lga: Option<String>,
     pub nearest_landmark: Option<String>,
     
-    // Base64 encoded images
     #[validate(length(min = 1, message = "Document image is required"))]
     pub document_url: String,
     
@@ -61,7 +60,6 @@ pub struct DocumentVerificationDto {
     pub lga: Option<String>,
     pub nearest_landmark: Option<String>,
     
-    // Base64 encoded images
     #[validate(length(min = 1, message = "Document image is required"))]
     pub document_url: String,
     

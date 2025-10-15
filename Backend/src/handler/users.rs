@@ -8,13 +8,7 @@ use validator::Validate;
 
 use crate::{
     db::userdb::UserExt, 
-    dtos::userdtos::{
-        FilterUserBoard, FilterUserDto, 
-        NameUpdateDto, RequestQueryDto, 
-        Response, RoleUpdateDto, 
-        TrustPointRequestDto, UserData, 
-        UserListResponseDto, UserPasswordUpdateDto, 
-        UserResponseDto}, 
+    dtos::userdtos::*, 
     error::{ErrorMessage, HttpError}, 
     handler::{
         google_oauth::get_google_user, 
@@ -24,7 +18,7 @@ use crate::{
         //     verify_wallet
         // }
         }, middleware::{role_check, JWTAuthMiddeware}, 
-        models::usermodel::UserRole, 
+        models::usermodel::*, 
         service::referral::generate_referral_link, 
         utils::password, AppState};
 
@@ -47,6 +41,8 @@ pub fn users_handler() -> Router {
     )
     .route("/name", put(update_user_name))
     .route("/role", put(update_user_role))
+    .route("/role/upgrade", put(upgrade_user_role)) // Self-upgrade route
+    .route("/role/available", get(get_available_roles)) // Get available roles
     .route("/password", put(update_user_password))
     .route(
         "/trust_point", 
@@ -367,6 +363,127 @@ pub async fn check_referral_status(
         "data": {
             "was_referred": referral.is_some(),
             "referral_info": referrer_info
+        }
+    })))
+}
+
+// handler/users.rs - Add this new function
+pub async fn upgrade_user_role(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth_user): Extension<JWTAuthMiddeware>,
+    Json(body): Json<UpgradeRoleDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    let user_id = auth_user.user.id;
+
+    // Verify the user is upgrading themselves
+    if body.target_user_id != user_id {
+        return Err(HttpError::unauthorized("You can only upgrade your own role"));
+    }
+
+    // Only allow upgrading to Worker or Employer
+    let allowed_roles = vec![UserRole::Worker, UserRole::Employer];
+    if !allowed_roles.contains(&body.new_role) {
+        return Err(HttpError::bad_request(
+            "You can only upgrade to Worker or Employer role"
+        ));
+    }
+
+    // Check if user is already verified (optional requirement)
+    let user = app_state.db_client
+        .get_user(Some(user_id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    // Optional: Require email verification
+    if !user.verified {
+        return Err(HttpError::bad_request(
+            "Please verify your email before upgrading your role"
+        ));
+    }
+
+    // Optional: Require identity verification for certain roles
+    if body.new_role == UserRole::Worker {
+        if user.verification_status != Some(VerificationStatus::Approved) {
+            return Err(HttpError::bad_request(
+                "Identity verification required to become a Worker"
+            ));
+        }
+    }
+
+    // Update the user role
+    let updated_user = app_state.db_client
+        .update_user_role(user_id, body.new_role)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let filtered_user = FilterUserDto::filter_user(&updated_user);
+
+    Ok(Json(UserResponseDto {
+        status: "success".to_string(),
+        data: UserData {
+            user: filtered_user,
+        },
+    }))
+}
+
+// Also add a function to get available roles for self-upgrade
+pub async fn get_available_roles(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth_user): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    let user = app_state.db_client
+        .get_user(Some(auth_user.user.id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    let mut available_roles = vec![];
+
+    // User can always upgrade to Worker or Employer from basic User role
+    if user.role == UserRole::User {
+        available_roles.push(RoleInfo {
+            role: UserRole::Worker,
+            name: "Worker".to_string(),
+            description: "Find and apply for jobs".to_string(),
+            requires_verification: true,
+        });
+
+        available_roles.push(RoleInfo {
+            role: UserRole::Employer,
+            name: "Employer".to_string(),
+            description: "Post jobs and hire workers".to_string(),
+            requires_verification: false,
+        });
+    }
+
+    // If user is already a Worker, they can become Employer (and vice versa)
+    if user.role == UserRole::Worker {
+        available_roles.push(RoleInfo {
+            role: UserRole::Employer,
+            name: "Employer".to_string(),
+            description: "Post jobs and hire workers".to_string(),
+            requires_verification: false,
+        });
+    }
+
+    if user.role == UserRole::Employer {
+        available_roles.push(RoleInfo {
+            role: UserRole::Worker,
+            name: "Worker".to_string(),
+            description: "Find and apply for jobs".to_string(),
+            requires_verification: true,
+        });
+    }
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "data": {
+            "current_role": user.role.to_str(),
+            "available_roles": available_roles
         }
     })))
 }
