@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use validator::Validate;
 use uuid::Uuid;
 use serde_json;
+use std::borrow::Cow;
 
 use crate::models::usermodel::{User, UserRole};
 
@@ -270,12 +271,12 @@ pub struct RoleInfo {
 }
 
 // Validation function for self-upgrade roles
-fn validate_upgrade_role(role: &UserRole) -> Result<(), validator::ValidationError> {
+fn validate_upgrade_role(role: &UserRole) -> Result<(), ValidationError> {
     match role {
         UserRole::Worker | UserRole::Employer => Ok(()),
         _ => {
-            let mut err = validator::ValidationError::new("invalid_upgrade_role");
-            err.add_param("expected", &"Worker or Employer");
+            let mut err = ValidationError::new("invalid_upgrade_role");
+            err.add_param(Cow::from("expected"), &"Worker or Employer");
             Err(err)
         }
     }
