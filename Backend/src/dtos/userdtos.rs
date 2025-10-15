@@ -2,10 +2,11 @@
 use core::str;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use validator::Validate;
+use validator::{Validate, ValidationError};
 use uuid::Uuid;
 use serde_json;
 use std::borrow::Cow;
+
 
 use crate::models::usermodel::{User, UserRole};
 
