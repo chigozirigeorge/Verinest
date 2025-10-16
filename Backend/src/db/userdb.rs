@@ -7,8 +7,11 @@ use super::db::DBClient;
 use crate::models::{
     referralmodel::{Referral, ReferralStats, ReferralUser}, 
     usermodel::{User, UserRole, VerificationStatus, VerificationType}, 
-    walletmodels::{UserWallet, WalletUpdateRequest}
+    walletmodels::{UserWallet, WalletUpdateRequest},
+    verificationmodels::*,
 };
+
+use crate::db::verificationdb::VerificationExt;
 
 
 #[async_trait]
@@ -220,6 +223,23 @@ pub trait UserExt {
         &self,
         verification_number: &str,
     ) -> Result<Option<User>, sqlx::Error>; 
+
+    async fn update_user_avatar(
+        &self,
+        user_id: Uuid,
+        avatar_url: String,
+    ) -> Result<User, sqlx::Error>;
+
+    async fn get_user_with_verification_status(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<(User, Vec<VerificationDocument>)>, sqlx::Error>;
+    
+    async fn get_users_with_verification_status(
+        &self,
+        page: u32,
+        limit: usize,
+    ) -> Result<Vec<(User, Vec<VerificationDocument>)>, sqlx::Error>;
 
 }
 
@@ -1241,5 +1261,64 @@ impl UserExt for DBClient {
         )
         .fetch_optional(&self.pool)
         .await
+    }
+
+    async fn update_user_avatar(
+        &self,
+        user_id: Uuid,
+        avatar_url: String,
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as!(
+            User,
+            r#"
+            UPDATE users
+            SET avatar_url = $1, updated_at = NOW()
+            WHERE id = $2
+            RETURNING id, name, username, email, password,
+            role as "role: UserRole", trust_score, verified,
+            verification_type as "verification_type: VerificationType",
+            referral_code, referral_count, google_id, avatar_url,
+            wallet_address, verification_status as "verification_status: VerificationStatus",
+            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+            verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+            verification_token, token_expires_at,
+            created_at as "created_at!: DateTime<Utc>", 
+            updated_at as "updated_at!: DateTime<Utc>"
+            "#,
+            avatar_url,
+            user_id
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    async fn get_user_with_verification_status(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<(User, Vec<VerificationDocument>)>, sqlx::Error> {
+        let user = self.get_user(Some(user_id), None, None, None).await?;
+        
+        if let Some(user) = user {
+            let documents = self.get_user_verification_documents(user_id).await?;
+            Ok(Some((user, documents)))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    async fn get_users_with_verification_status(
+        &self,
+        page: u32,
+        limit: usize,
+    ) -> Result<Vec<(User, Vec<VerificationDocument>)>, sqlx::Error> {
+        let users = self.get_users(page, limit).await?;
+        let mut result = Vec::new();
+        
+        for user in users {
+            let documents = self.get_user_verification_documents(user.id).await?;
+            result.push((user, documents));
+        }
+        
+        Ok(result)
     }
 }

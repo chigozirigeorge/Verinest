@@ -1,6 +1,10 @@
 //11
 use super::sendmail::send_email;
-use crate::{models::verificationmodels::OtpPurpose};
+use crate::{models::{
+    verificationmodels::OtpPurpose,
+    usermodel::VerificationStatus
+}
+};
 
 pub async fn send_verification_email(
     to_email: &str,
@@ -69,6 +73,60 @@ pub async fn send_otp_email(
         ("{{otp_code}}".to_string(), otp_code.to_string()),
         ("{{purpose}}".to_string(), format!("{:?}", purpose)),
     ];
+
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
+// In mails.rs - Add this function
+pub async fn send_verification_status_email(
+    to_email: &str,
+    username: &str,
+    status: &VerificationStatus,
+    review_notes: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = match status {
+        VerificationStatus::Approved => "Verification Approved",
+        VerificationStatus::Rejected => "Verification Rejected", 
+        VerificationStatus::Processing => "Verification Under Review",
+        VerificationStatus::Submitted => "Verification Submitted",
+        _ => "Verification Status Update",
+    };
+
+    let template_path = "src/mail/templates/Verification-Status.html";
+    
+    let status_display = match status {
+        VerificationStatus::Approved => "Approved",
+        VerificationStatus::Rejected => "Rejected",
+        VerificationStatus::Processing => "Under Review",
+        VerificationStatus::Submitted => "Submitted",
+        VerificationStatus::Pending => "Pending",
+        VerificationStatus::Expired => "Expired",
+    };
+
+    let app_url = std::env::var("APP_URL").unwrap_or_else(|_| "https://verinestorg.vercel.app/".to_string());
+    let dashboard_url = format!("{}/dashboard", app_url);
+    let verification_url = format!("{}/verification", app_url);
+
+    let is_approved = status == &VerificationStatus::Approved;
+    let is_rejected = status == &VerificationStatus::Rejected;
+    let is_under_review = status == &VerificationStatus::Processing;
+
+    let mut placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{status}}".to_string(), status_display.to_lowercase()),
+        ("{{status_display}}".to_string(), status_display.to_string()),
+        ("{{dashboard_url}}".to_string(), dashboard_url),
+        ("{{verification_url}}".to_string(), verification_url),
+        ("{{is_approved}}".to_string(), is_approved.to_string()),
+        ("{{is_rejected}}".to_string(), is_rejected.to_string()),
+        ("{{is_under_review}}".to_string(), is_under_review.to_string()),
+    ];
+
+    if let Some(notes) = review_notes {
+        placeholders.push(("{{review_notes}}".to_string(), notes.to_string()));
+    } else {
+        placeholders.push(("{{review_notes}}".to_string(), "".to_string()));
+    }
 
     send_email(to_email, subject, template_path, &placeholders).await
 }

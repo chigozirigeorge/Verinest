@@ -1,8 +1,9 @@
 //13
 use std::{env, sync::Arc};
 
-use axum::{extract::Query, middleware, response::IntoResponse, routing::{get, post, put}, Extension, Json, Router};
+use axum::{extract::{Query, Path}, middleware, response::IntoResponse, routing::{get, post, put}, Extension, Json, Router};
 use validator::Validate;
+use uuid::Uuid;
 
 
 
@@ -39,6 +40,7 @@ pub fn users_handler() -> Router {
             role_check(state, req, next, vec![UserRole::User, UserRole::Admin])
         }))
     )
+     .route("/avatar", put(update_user_avatar))
     .route("/name", put(update_user_name))
     .route("/role", put(update_user_role))
     .route("/role/upgrade", put(upgrade_user_role)) // Self-upgrade route
@@ -51,6 +53,20 @@ pub fn users_handler() -> Router {
             role_check(state, req, next, vec![UserRole::User, UserRole::Admin])
         }))
     )
+    .route(
+            "/admin/users", 
+            get(get_users_admin)
+            .layer(middleware::from_fn(|state, req, next| {
+                role_check(state, req, next, vec![UserRole::Admin, UserRole::SuperAdmin])
+            }))
+        )
+        .route(
+            "/admin/users/:user_id", 
+            get(get_user_admin)
+            .layer(middleware::from_fn(|state, req, next| {
+                role_check(state, req, next, vec![UserRole::Admin, UserRole::SuperAdmin])
+            }))
+        )
     .route(
         "/leaderboard", 
         get(get_leaderboard)
@@ -430,6 +446,89 @@ pub async fn upgrade_user_role(
     }))
 }
 
+//////////
+pub async fn update_user_avatar(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(user): Extension<JWTAuthMiddeware>,
+    Json(body): Json<AvatarUpdateDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    let user_id = user.user.id;
+
+    let updated_user = app_state.db_client
+        .update_user_avatar(user_id, body.avatar_url.clone())
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let filtered_user = FilterUserDto::filter_user(&updated_user);
+
+    Ok(Json(UserResponseDto {
+        status: "success".to_string(),
+        data: UserData {
+            user: filtered_user,
+        },
+    }))
+}
+
+pub async fn get_users_admin(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Query(query_params): Query<RequestQueryDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    query_params.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    let page = query_params.page.unwrap_or(1);
+    let limit = query_params.limit.unwrap_or(10);
+    
+    let users_with_docs = app_state.db_client
+        .get_users_with_verification_status(page as u32, limit)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let user_count = app_state.db_client
+        .get_user_count()
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let admin_users: Vec<AdminUserDto> = users_with_docs
+        .into_iter()
+        .map(|(user, _documents)| AdminUserDto::from_user(&user))
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "data": {
+            "users": admin_users,
+            "total_count": user_count,
+            "page": page,
+            "limit": limit
+        }
+    })))
+}
+
+pub async fn get_user_admin(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Path(user_id): Path<Uuid>,
+) -> Result<impl IntoResponse, HttpError> {
+    let user_with_docs = app_state.db_client
+        .get_user_with_verification_status(user_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    let (user, documents) = user_with_docs;
+    let admin_user = AdminUserDto::from_user(&user);
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "data": {
+            "user": admin_user,
+            "verification_documents": documents
+        }
+    })))
+}
 // Also add a function to get available roles for self-upgrade
 pub async fn get_available_roles(
     Extension(app_state): Extension<Arc<AppState>>,

@@ -272,6 +272,7 @@ pub async fn get_pending_verifications(
     })))
 }
 
+// In verification.rs - Update the review_verification function
 pub async fn review_verification(
     Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth): Extension<JWTAuthMiddeware>,
@@ -305,49 +306,58 @@ pub async fn review_verification(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+    // Get user to send email
+    let user = app_state.db_client
+        .get_user(Some(verification.user_id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    // Send verification status email
+    if let Err(e) = crate::mail::mails::send_verification_status_email(
+        &user.email,
+        &user.name,
+        &body.status,
+        body.review_notes.as_deref(),
+    ).await {
+        tracing::error!("Failed to send verification status email: {}", e);
+        // Don't fail the request if email fails
+    }
+
     // If approved, update user verification status AND populate user data
     if body.status == VerificationStatus::Approved {
-        // Get the user to update
-        let user = app_state.db_client
-            .get_user(Some(verification.user_id), None, None, None)
-            .await
-            .map_err(|e| HttpError::server_error(e.to_string()))?
-            .ok_or_else(|| HttpError::not_found("User not found"))?;
-
         // Update user with verification data based on document type
         match verification.document_type {
             VerificationType::NationalId => {
-                // For NIN verification, populate NIN-specific fields
                 app_state.db_client
                     .update_user_verification_data(
                         verification.user_id,
                         VerificationStatus::Approved,
-                        Some(verification.document_id.clone()), // NIN number
+                        Some(verification.document_id.clone()),
                         verification.document_type,
                         Some(verification.document_url.clone()),
                         Some(verification.selfie_url.clone()),
-                        None, // nationality - we'll need to get this from the original submission
-                        None, // dob - we'll need to get this from the original submission
-                        None, // lga - we'll need to get this from the original submission
-                        None, // nearest_landmark - we'll need to get this from the original submission
+                        None,
+                        None,
+                        None,
+                        None,
                     )
                     .await
                     .map_err(|e| HttpError::server_error(e.to_string()))?;
             }
             VerificationType::DriverLicense | VerificationType::Passport => {
-                // For other documents, populate general verification fields
                 app_state.db_client
                     .update_user_verification_data(
                         verification.user_id,
                         VerificationStatus::Approved,
-                        Some(verification.document_id.clone()), // Document ID
+                        Some(verification.document_id.clone()),
                         verification.document_type,
                         Some(verification.document_url.clone()),
                         Some(verification.selfie_url.clone()),
-                        None, // nationality
-                        None, // dob
-                        None, // lga
-                        None, // nearest_landmark
+                        None,
+                        None,
+                        None,
+                        None,
                     )
                     .await
                     .map_err(|e| HttpError::server_error(e.to_string()))?;

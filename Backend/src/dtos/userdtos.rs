@@ -8,7 +8,8 @@ use serde_json;
 use std::borrow::Cow;
 
 
-use crate::models::usermodel::{User, UserRole};
+use crate::models::usermodel::*;
+
 
 #[derive(Validate, Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RegisterUserWithReferralDto {
@@ -77,8 +78,11 @@ pub struct FilterUserDto {
     pub dob: DateTime<Utc>,
     pub nationality: Option<String>,
     pub lga: String,
-    pub verified: bool,
+    pub email_verified: bool,
+    pub document_verified: bool,
+    pub verification_status: Option<String>,
     pub wallet_address: Option<String>,
+    pub avatar_url: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
     #[serde(rename = "updatedAt")]
@@ -92,11 +96,14 @@ impl FilterUserDto {
             name: user.name.to_owned(),
             email: user.email.to_owned(),
             trust_score: user.trust_score,
-            verified: user.verified,
+            email_verified: user.verified,
+            document_verified: user.verification_status == Some(VerificationStatus::Approved),
+            verification_status: user.verification_status.map(|s| s.to_str().to_string()),
             nationality: user.nationality.clone(),
             lga: user.lga.clone().unwrap_or_default(),
             dob: user.dob.unwrap_or_else(|| chrono::Utc::now()),
             wallet_address: user.wallet_address.clone(),
+            avatar_url: user.avatar_url.clone(),
             role: user.role.to_str().to_string(),
             created_at: user.created_at,
             updated_at: user.updated_at,
@@ -279,6 +286,85 @@ fn validate_upgrade_role(role: &UserRole) -> Result<(), ValidationError> {
             let mut err = ValidationError::new("invalid_upgrade_role");
             err.add_param(Cow::from("expected"), &"Worker or Employer");
             Err(err)
+        }
+    }
+}
+
+
+#[derive(Validate, Debug, Default, Clone, Serialize, Deserialize)]
+pub struct AvatarUpdateDto {
+    #[validate(url(message = "Avatar URL must be a valid URL"))]
+    pub avatar_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AdminUserResponseDto {
+    pub status: String,
+    pub data: AdminUserData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AdminUserData {
+    pub user: AdminUserDto,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AdminUserDto {
+    pub id: String,
+    pub name: String,
+    pub username: String,
+    pub email: String,
+    pub role: String,
+    pub trust_score: i32,
+    pub email_verified: bool,
+    pub document_verified: bool,
+    pub verification_status: Option<String>,
+    pub verification_type: Option<String>,
+    pub referral_code: Option<String>,
+    pub referral_count: Option<i32>,
+    pub google_id: Option<String>,
+    pub avatar_url: Option<String>,
+    pub wallet_address: Option<String>,
+    pub nin_number: Option<String>,
+    pub verification_number: Option<String>,
+    pub nationality: Option<String>,
+    pub dob: Option<DateTime<Utc>>,
+    pub lga: Option<String>,
+    pub nearest_landmark: Option<String>,
+    pub next_of_kin: Option<String>,
+    #[serde(rename = "createdAt")]
+    pub created_at: DateTime<Utc>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: DateTime<Utc>,
+}
+
+impl AdminUserDto {
+    pub fn from_user(user: &crate::models::usermodel::User) -> Self {
+        Self {
+            id: user.id.to_string(),
+            name: user.name.clone(),
+            username: user.username.clone(),
+            email: user.email.clone(),
+            role: user.role.to_str().to_string(),
+            trust_score: user.trust_score,
+            email_verified: user.verified,
+            document_verified: user.verification_status == Some(VerificationStatus::Approved),
+            verification_status: user.verification_status.map(|s| s.to_str().to_string()),
+            verification_type: Some(user.verification_type.to_str().to_string()),
+            referral_code: user.referral_code.clone(),
+            referral_count: user.referral_count,
+            google_id: user.google_id.clone(),
+            avatar_url: user.avatar_url.clone(),
+            wallet_address: user.wallet_address.clone(),
+            nin_number: user.nin_number.clone(),
+            verification_number: user.verification_number.clone(),
+            nationality: user.nationality.clone(),
+            dob: user.dob,
+            lga: user.lga.clone(),
+            nearest_landmark: user.nearest_landmark.clone(),
+            next_of_kin: user.next_of_kin.clone(),
+            created_at: user.created_at,
+            updated_at: user.updated_at,
         }
     }
 }
