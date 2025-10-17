@@ -60,6 +60,7 @@ impl VerificationType {
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, sqlx::Type, PartialEq)]
 #[sqlx(type_name = "verification_status", rename_all = "snake_case")]
 pub enum VerificationStatus {
+    Unverified,   ///added here
     Pending,
     Submitted,
     Processing,
@@ -71,6 +72,7 @@ pub enum VerificationStatus {
 impl VerificationStatus {
     pub fn to_str(&self) -> &str {
         match self {
+            VerificationStatus::Unverified => "unverified", //added here
             VerificationStatus::Pending => "pending",
             VerificationStatus::Submitted => "submitted",
             VerificationStatus::Processing => "processing",

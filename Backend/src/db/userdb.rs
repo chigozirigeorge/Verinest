@@ -488,8 +488,8 @@ impl UserExt for DBClient {
         let user = sqlx::query_as!(
             User,
             r#"
-        INSERT INTO users (name, username, email, password, verification_token, token_expires_at) 
-        VALUES ($1, $2, $3, $4, $5, $6) 
+        INSERT INTO users (name, username, email, password, verification_token, token_expires_at, verification_status) 
+        VALUES ($1, $2, $3, $4, $5, $6, 'unverified'::verification_status) 
         RETURNING id, name, username, email, password,
         role as "role: UserRole", trust_score, verified,
         verification_type as "verification_type: VerificationType",
@@ -957,8 +957,8 @@ impl UserExt for DBClient {
         sqlx::query_as!(
             User,
             r#"
-                INSERT INTO users (name, username, email, google_id, avatar_url, trust_score, verified)
-                VALUES ($1, $2, $3, $4, $5, $6, true)
+                INSERT INTO users (name, username, email, google_id, avatar_url, trust_score, verified, verification_status)
+                VALUES ($1, $2, $3, $4, $5, $6, true, 'unverified'::verification_status)
                 RETURNING id, name, username, email, password,
                 role as "role: UserRole", trust_score, verified,
                 verification_type as "verification_type: VerificationType",

@@ -95,6 +95,7 @@ pub async fn send_verification_status_email(
     let template_path = "src/mail/templates/Verification-Status.html";
     
     let status_display = match status {
+        VerificationStatus::Unverified => "unverified",
         VerificationStatus::Approved => "Approved",
         VerificationStatus::Rejected => "Rejected",
         VerificationStatus::Processing => "Under Review",
