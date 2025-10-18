@@ -231,7 +231,7 @@ impl VerificationExt for DBClient {
                 status as "status: VerificationStatus",
                 reviewed_by, review_notes, created_at, updated_at
             FROM verification_documents
-            WHERE status = 'pending'
+            WHERE status = 'unverified'
             ORDER BY created_at ASC
             "#,
         )
