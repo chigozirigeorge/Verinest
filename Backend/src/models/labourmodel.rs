@@ -6,6 +6,7 @@ use sqlx::types::BigDecimal;
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, sqlx::Type, PartialEq)]
 #[sqlx(type_name = "worker_category", rename_all = "snake_case")]
 pub enum WorkerCategory {
+    // Construction & Building Trades
     Painter,
     Plumber,
     Electrician,
@@ -13,28 +14,117 @@ pub enum WorkerCategory {
     Mason,
     Tiler,
     Roofer,
+    Welder,
+    SteelBender,
+    ConcreteWorker,
+    Bricklayer,
+    FlooringSpecialist,
+    Glazier,
+    
+    // Interior & Finishing
     InteriorDecorator,
+    FurnitureMaker,
+    Upholsterer,
+    CurtainBlindInstaller,
+    WallpaperSpecialist,
+    
+    // Landscaping & Outdoor
     Landscaper,
+    Gardener,
+    FenceInstaller,
+    SwimmingPoolTechnician,
+    OutdoorLightingSpecialist,
+    
+    // Specialized Real Estate Services
+    RealEstateAgent,
+    PropertyManager,
+    FacilityManager,
+    BuildingInspector,
+    QuantitySurveyor,
+    Architect,
+    CivilEngineer,
+    StructuralEngineer,
+    
+    // Maintenance & Repair
     Cleaner,
-    SecurityGuard,
+    Handyman,
+    HVACTechnician,
+    ElevatorTechnician,
+    SecuritySystemInstaller,
+    PestControlSpecialist,
+    
+    // Demolition & Site Work
+    DemolitionExpert,
+    SiteSupervisor,
+    ConstructionLaborer,
+    
+    // Safety & Compliance
+    SafetyOfficer,
+    FireSafetyOfficer,
+    
     Other,
 }
 
 impl WorkerCategory {
     pub fn to_str(&self) -> &str {
         match self {
-            WorkerCategory::Carpenter => "carpenter",
-            WorkerCategory::Cleaner => "cleaner",
-            WorkerCategory::Electrician => "electrician",
-            WorkerCategory::InteriorDecorator => "interior_decorator",
-            WorkerCategory::Landscaper => "landscaper",
-            WorkerCategory::Mason => "mason",
-            WorkerCategory::Other => "other",
+            // Construction & Building Trades
             WorkerCategory::Painter => "painter",
             WorkerCategory::Plumber => "plumber",
-            WorkerCategory::Roofer => "roofer",
-            WorkerCategory::SecurityGuard => "security_guard",
+            WorkerCategory::Electrician => "electrician",
+            WorkerCategory::Carpenter => "carpenter",
+            WorkerCategory::Mason => "mason",
             WorkerCategory::Tiler => "tiler",
+            WorkerCategory::Roofer => "roofer",
+            WorkerCategory::Welder => "welder",
+            WorkerCategory::SteelBender => "steel_bender",
+            WorkerCategory::ConcreteWorker => "concrete_worker",
+            WorkerCategory::Bricklayer => "bricklayer",
+            WorkerCategory::FlooringSpecialist => "flooring_specialist",
+            WorkerCategory::Glazier => "glazier",
+            
+            // Interior & Finishing
+            WorkerCategory::InteriorDecorator => "interior_decorator",
+            WorkerCategory::FurnitureMaker => "furniture_maker",
+            WorkerCategory::Upholsterer => "upholsterer",
+            WorkerCategory::CurtainBlindInstaller => "curtain_blind_installer",
+            WorkerCategory::WallpaperSpecialist => "wallpaper_specialist",
+            
+            // Landscaping & Outdoor
+            WorkerCategory::Landscaper => "landscaper",
+            WorkerCategory::Gardener => "gardener",
+            WorkerCategory::FenceInstaller => "fence_installer",
+            WorkerCategory::SwimmingPoolTechnician => "swimming_pool_technician",
+            WorkerCategory::OutdoorLightingSpecialist => "outdoor_lighting_specialist",
+            
+            // Specialized Real Estate Services
+            WorkerCategory::RealEstateAgent => "real_estate_agent",
+            WorkerCategory::PropertyManager => "property_manager",
+            WorkerCategory::FacilityManager => "facility_manager",
+            WorkerCategory::BuildingInspector => "building_inspector",
+            WorkerCategory::QuantitySurveyor => "quantity_surveyor",
+            WorkerCategory::Architect => "architect",
+            WorkerCategory::CivilEngineer => "civil_engineer",
+            WorkerCategory::StructuralEngineer => "structural_engineer",
+            
+            // Maintenance & Repair
+            WorkerCategory::Cleaner => "cleaner",
+            WorkerCategory::Handyman => "handyman",
+            WorkerCategory::HVACTechnician => "hvac_technician",
+            WorkerCategory::ElevatorTechnician => "elevator_technician",
+            WorkerCategory::SecuritySystemInstaller => "security_system_installer",
+            WorkerCategory::PestControlSpecialist => "pest_control_specialist",
+            
+            // Demolition & Site Work
+            WorkerCategory::DemolitionExpert => "demolition_expert",
+            WorkerCategory::SiteSupervisor => "site_supervisor",
+            WorkerCategory::ConstructionLaborer => "construction_laborer",
+            
+            // Safety & Compliance
+            WorkerCategory::SafetyOfficer => "safety_officer",
+            WorkerCategory::FireSafetyOfficer => "fire_safety_officer",
+            
+            WorkerCategory::Other => "other",
         }
     }
 }
