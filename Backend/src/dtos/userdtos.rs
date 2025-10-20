@@ -160,8 +160,12 @@ pub struct RoleUpdateDto {
 
 fn validate_user_role(role: &UserRole) -> Result<(), validator::ValidationError> {
     match role {
-        UserRole::Admin | UserRole::User => Ok(()),
-        _ => Err(validator::ValidationError::new("invalid_role")),
+        UserRole::SuperAdmin => {
+            let mut error = ValidationError::new("invalid_role");
+            error.message = Some("SuperAdmin role cannot be assigned manually".into());
+            Err(error)
+        }
+        _ => Ok(()) // Allow all other roles
     }
 }
 
