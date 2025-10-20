@@ -237,6 +237,7 @@ impl VerificationExt for DBClient {
         )
         .fetch_all(&self.pool)
         .await
+        
     }
 
     async fn update_verification_status(

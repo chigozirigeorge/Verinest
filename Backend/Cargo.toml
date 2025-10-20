@@ -11,7 +11,7 @@ dotenv = "0.15.0"
 jsonwebtoken = "9.2.0"
 serde = { version = "1.0.183", features = ["derive"] }
 serde_json = "1.0.104"
-sqlx = { version = "0.8.1", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "bigdecimal"] }
+sqlx = { version = "0.8.1", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "bigdecimal"]}
 uuid = { version = "1.4.1", features = ["serde", "v4"] }
 validator = { version = "0.16.1", features = ["derive"] }
 axum = "0.7.5"
@@ -44,3 +44,10 @@ bigdecimal = { version = "0.4", features = ["serde"] }
 futures = "0.3.31"
 subtle = "2.4"
 hmac = "0.12"
+
+[profile.release]
+opt-level = "z"  # Optimize for size
+codegen-units = 1
+lto = true
+strip = true
+panic = "abort"
