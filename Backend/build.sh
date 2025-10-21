@@ -1,21 +1,47 @@
 #!/bin/bash
 set -e
 
-echo "=== Building verinest ==="
+echo "=== Environment Info ==="
+rustc --version
+cargo --version
+
+echo "=== Current Directory ==="
+pwd
+ls -la
+
+echo "=== Checking Source Files ==="
+find src/ -name "*.rs" | head -10
+
+echo "=== Attempting Build ==="
+# First try a simple build check
+cargo check --release || {
+    echo "=== Cargo check failed, showing errors ==="
+    # Try to build with full error output
+    cargo build --release 2>&1 | head -100
+    exit 1
+}
+
+echo "=== Cargo check passed, building release ==="
 cargo build --release
 
-echo "=== Copying binary to /bin directory ==="
-# Create bin directory if it doesn't exist
-mkdir -p bin
+echo "=== Build Results ==="
+if [ -f "target/release/verinest" ]; then
+    echo "✅ Binary built successfully at target/release/verinest"
+    ls -la target/release/verinest
+    echo "=== Testing binary ==="
+    ./target/release/verinest --version 2>/dev/null || echo "Binary test failed but file exists"
+    
+    # Copy to expected location
+    mkdir -p bin
+    cp target/release/verinest bin/
+    chmod +x bin/verinest
+    echo "✅ Binary copied to bin/verinest"
+else
+    echo "❌ Binary not found! Checking what was built:"
+    find target/ -type f -executable 2>/dev/null
+    echo "=== Full target directory ==="
+    ls -la target/ 2>/dev/null || echo "No target directory"
+    exit 1
+fi
 
-# Copy the binary to where Railway expects it
-cp target/release/verinest bin/verinest
-
-# Make sure it's executable
-chmod +x bin/verinest
-
-echo "=== Verification ==="
-echo "Contents of bin/:"
-ls -la bin/
-
-echo "=== Build completed ==="
+echo "=== Build completed successfully ==="
