@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Extension, Json, Router
 };
 use uuid::Uuid;
@@ -42,6 +42,8 @@ pub fn labour_handler() -> Router {
         .route("/jobs/:job_id/progress", get(get_job_progress))
         .route("/jobs/:job_id/complete", put(complete_job))
         .route("/jobs/:job_id/review", post(create_job_review))
+        .route("/worker/portfolio/:item_id", delete(delete_portfolio_item)) // NEW
+        .route("/workers/:worker_id/portfolio", get(get_worker_public_portfolio))
         
         // Dispute management routes
         .route("/jobs/:job_id/dispute", post(create_dispute))
