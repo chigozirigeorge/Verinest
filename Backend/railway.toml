@@ -1,6 +1,6 @@
 [build]
 builder = "railway"
-buildCommand = "chmod +x build.sh && ./build.sh"
+buildCommand = "cargo build --release"
 
 [deploy]
 startCommand = "./target/release/verinest"
