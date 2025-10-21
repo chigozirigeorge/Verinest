@@ -440,18 +440,12 @@ impl<T> PaginatedResponse<T> {
 
 
 
-
-
-
-
-//added here
-
 #[derive(Debug, Deserialize)]
 pub struct UpdateAvailabilityDto {
     pub is_available: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct AddPortfolioItemDto {
     pub title: String,
     pub description: String,

@@ -141,12 +141,16 @@ pub async fn update_worker_availability(
     )))
 }
 
-// Portfolio Handlers
+// Portfolio Handlers - FIXED VERSION
 pub async fn add_portfolio_item(
     Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth): Extension<JWTAuthMiddeware>,
     Json(body): Json<AddPortfolioItemDto>,
 ) -> Result<impl IntoResponse, HttpError> {
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    // Get worker profile for the authenticated user
     let worker_profile = app_state.db_client
         .get_worker_profile(auth.user.id)
         .await
@@ -154,7 +158,7 @@ pub async fn add_portfolio_item(
 
     let portfolio_item = app_state.db_client
         .add_portfolio_item(
-            worker_profile.id,
+            worker_profile.id, // Use worker_profile.id, not auth.user.id
             body.title,
             body.description,
             body.image_url,
@@ -169,12 +173,20 @@ pub async fn add_portfolio_item(
     )))
 }
 
+
+// FIXED: Get portfolio for authenticated worker
 pub async fn get_worker_portfolio(
     Extension(app_state): Extension<Arc<AppState>>,
-    Path(worker_id): Path<Uuid>,
+    Extension(auth): Extension<JWTAuthMiddeware>,
 ) -> Result<impl IntoResponse, HttpError> {
+    // Get worker profile first to get the profile ID
+    let worker_profile = app_state.db_client
+        .get_worker_profile(auth.user.id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
     let portfolio = app_state.db_client
-        .get_worker_portfolio(worker_id)
+        .get_worker_portfolio(worker_profile.id) // Use worker_profile.id
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
@@ -183,6 +195,57 @@ pub async fn get_worker_portfolio(
         portfolio,
     )))
 }
+
+// ADD THIS: Delete portfolio item handler
+pub async fn delete_portfolio_item(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth): Extension<JWTAuthMiddeware>,
+    Path(item_id): Path<Uuid>,
+) -> Result<impl IntoResponse, HttpError> {
+    // Verify the portfolio item belongs to the authenticated worker
+    let worker_profile = app_state.db_client
+        .get_worker_profile(auth.user.id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let portfolio_item = app_state.db_client
+        .get_portfolio_item_by_id(item_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Portfolio item not found"))?;
+
+    // Check ownership
+    if portfolio_item.worker_id != worker_profile.id {
+        return Err(HttpError::unauthorized("Not authorized to delete this portfolio item"));
+    }
+
+    app_state.db_client
+        .delete_portfolio_item(item_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(
+        "Portfolio item deleted successfully",
+        (),
+    )))
+}
+
+// ADD THIS: Get specific worker's portfolio (public endpoint)
+pub async fn get_worker_public_portfolio(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Path(worker_id): Path<Uuid>,
+) -> Result<impl IntoResponse, HttpError> {
+    let portfolio = app_state.db_client
+        .get_worker_portfolio(worker_id) // This expects worker_profile.id
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(
+        "Worker portfolio retrieved successfully",
+        portfolio,
+    )))
+}
+
 
 // Job Management Handlers
 pub async fn create_job(

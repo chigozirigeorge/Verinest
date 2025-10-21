@@ -291,6 +291,16 @@ pub trait LaborExt {
         &self, 
         worker_id: Uuid
     ) -> Result<Vec<JobApplication>, Error>;
+
+    async fn get_portfolio_item_by_id(
+        &self,
+        item_id: Uuid,
+    ) -> Result<Option<WorkerPortfolio>, Error>;
+
+    async fn delete_portfolio_item(
+        &self,
+        item_id: Uuid,
+    ) -> Result<(), Error>;
 }
 
 
@@ -1485,5 +1495,38 @@ async fn assign_worker_to_job(
         .bind(worker_id)
         .fetch_all(&self.pool)
         .await
+    }
+
+    async fn get_portfolio_item_by_id(
+        &self,
+        item_id: Uuid,
+    ) -> Result<Option<WorkerPortfolio>, Error> {
+    sqlx::query_as::<_, WorkerPortfolio>(
+        r#"
+        SELECT id, worker_id, title, description, image_url, project_date, created_at
+        FROM worker_portfolios 
+        WHERE id = $1
+        "#
+    )
+    .bind(item_id)
+    .fetch_optional(&self.pool)
+    .await
+    }
+
+    async fn delete_portfolio_item(
+        &self,
+        item_id: Uuid,
+    ) -> Result<(), Error> {
+        sqlx::query(
+            r#"
+            DELETE FROM worker_portfolios 
+            WHERE id = $1
+            "#
+        )
+        .bind(item_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 }
