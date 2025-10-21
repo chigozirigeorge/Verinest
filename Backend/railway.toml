@@ -1,9 +1,9 @@
 [build]
 builder = "railway"
-buildCommand = "cargo build --release"
 
 [deploy]
 startCommand = "./target/release/verinest"
 
 [build.railway]
 language = "rust"
+buildCommand = "cargo build --release"
