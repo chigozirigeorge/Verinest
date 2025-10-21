@@ -2,7 +2,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
-use sqlx::Error;
+use sqlx::{Error, Row};
 use serde_json::Value as JsonValue;
 use num_traits::ToPrimitive;
 use bigdecimal::BigDecimal;
@@ -177,21 +177,20 @@ impl NairaWalletExt for DBClient {
         let mut tx = self.pool.begin().await?;
 
         // Get the original transaction
-        let original = sqlx::query_as!(
-            WalletTransaction,
+        let original = sqlx::query_as::<_, WalletTransaction>(
             r#"
             SELECT 
                 id, 
                 wallet_id, 
                 user_id, 
-                transaction_type as "transaction_type: TransactionType",
+                transaction_type,
                 amount, 
                 balance_before, 
                 balance_after, 
-                status as "status: TransactionStatus",
+                status,
                 reference, 
                 external_reference, 
-                payment_method as "payment_method: PaymentMethod",
+                payment_method,
                 description, 
                 metadata, 
                 job_id, 
@@ -203,26 +202,26 @@ impl NairaWalletExt for DBClient {
             FROM wallet_transactions
             WHERE id = $1
             FOR UPDATE
-            "#,
-            transaction_id
+            "#
         )
+        .bind(transaction_id)
         .fetch_one(&mut *tx)
         .await?;
 
         // Get current wallet balance
-        let wallet = sqlx::query!(
-            "SELECT id, balance, available_balance FROM naira_wallets WHERE id = $1 FOR UPDATE",
-            original.wallet_id
+        let wallet = sqlx::query(
+            "SELECT id, balance, available_balance FROM naira_wallets WHERE id = $1 FOR UPDATE"
         )
+        .bind(original.wallet_id)
         .fetch_one(&mut *tx)
         .await?;
 
-        let balance_before = wallet.balance;
+        let balance_before = wallet.get::<i64, _>("balance");
         let balance_after = balance_before + original.amount;
-        let available_after = wallet.available_balance + original.amount;
+        let available_after = wallet.get::<i64, _>("available_balance") + original.amount;
 
         // Update wallet balance
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE naira_wallets 
             SET balance = $2, 
@@ -230,17 +229,16 @@ impl NairaWalletExt for DBClient {
                 updated_at = NOW(),
                 last_activity_at = NOW()
             WHERE id = $1
-            "#,
-            wallet.id,
-            balance_after,
-            available_after
+            "#
         )
+        .bind(wallet.get::<Uuid, _>("id"))
+        .bind(balance_after)
+        .bind(available_after)
         .execute(&mut *tx)
         .await?;
 
         // Create refund transaction record
-        let refund = sqlx::query_as!(
-            WalletTransaction,
+        let refund = sqlx::query_as::<_, WalletTransaction>(
             r#"
             INSERT INTO wallet_transactions 
             (wallet_id, user_id, transaction_type, amount, balance_before, balance_after, 
@@ -250,14 +248,14 @@ impl NairaWalletExt for DBClient {
                 id, 
                 wallet_id, 
                 user_id, 
-                transaction_type as "transaction_type: TransactionType",
+                transaction_type,
                 amount, 
                 balance_before, 
                 balance_after, 
-                status as "status: TransactionStatus",
+                status,
                 reference, 
                 external_reference, 
-                payment_method as "payment_method: PaymentMethod",
+                payment_method,
                 description, 
                 metadata, 
                 job_id, 
@@ -266,17 +264,17 @@ impl NairaWalletExt for DBClient {
                 created_at, 
                 updated_at, 
                 completed_at
-            "#,
-            original.wallet_id,
-            original.user_id,
-            original.amount,
-            balance_before,
-            balance_after,
-            format!("REFUND-{}", &original.reference),
-            original.external_reference,
-            format!("Refund for transaction {}", original.reference),
-            original.metadata
+            "#
         )
+        .bind(original.wallet_id)
+        .bind(original.user_id)
+        .bind(original.amount)
+        .bind(balance_before)
+        .bind(balance_after)
+        .bind(format!("REFUND-{}", &original.reference))
+        .bind(original.external_reference)
+        .bind(format!("Refund for transaction {}", original.reference))
+        .bind(original.metadata)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -285,8 +283,7 @@ impl NairaWalletExt for DBClient {
     }
 
     async fn create_naira_wallet(&self, user_id: Uuid) -> Result<NairaWallet, Error> {
-        sqlx::query_as!(
-            NairaWallet,
+        sqlx::query_as::<_, NairaWallet>(
             r#"
             INSERT INTO naira_wallets (user_id)
             VALUES ($1)
@@ -297,7 +294,7 @@ impl NairaWalletExt for DBClient {
                 available_balance, 
                 total_deposits, 
                 total_withdrawals, 
-                status as "status: WalletStatus", 
+                status, 
                 daily_limit, 
                 monthly_limit, 
                 is_verified, 
@@ -305,17 +302,15 @@ impl NairaWalletExt for DBClient {
                 created_at, 
                 updated_at, 
                 last_activity_at
-            "#,
-            user_id
+            "#
         )
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await
     }
 
-
     async fn get_naira_wallet(&self, user_id: Uuid) -> Result<Option<NairaWallet>, Error> {
-        sqlx::query_as!(
-            NairaWallet,
+        sqlx::query_as::<_, NairaWallet>(
             r#"
             SELECT 
                 id, 
@@ -324,7 +319,7 @@ impl NairaWalletExt for DBClient {
                 available_balance, 
                 total_deposits, 
                 total_withdrawals, 
-                status as "status: WalletStatus", 
+                status, 
                 daily_limit, 
                 monthly_limit, 
                 is_verified, 
@@ -334,20 +329,19 @@ impl NairaWalletExt for DBClient {
                 last_activity_at
             FROM naira_wallets 
             WHERE user_id = $1
-            "#,
-            user_id
+            "#
         )
+        .bind(user_id)
         .fetch_optional(&self.pool)
         .await
     }
 
-     async fn update_wallet_status(
+    async fn update_wallet_status(
         &self, 
         wallet_id: Uuid, 
         status: WalletStatus
     ) -> Result<NairaWallet, Error> {
-        sqlx::query_as!(
-            NairaWallet,
+        sqlx::query_as::<_, NairaWallet>(
             r#"
             UPDATE naira_wallets 
             SET status = $2, updated_at = NOW()
@@ -359,7 +353,7 @@ impl NairaWalletExt for DBClient {
                 available_balance, 
                 total_deposits, 
                 total_withdrawals, 
-                status as "status: WalletStatus", 
+                status, 
                 daily_limit, 
                 monthly_limit, 
                 is_verified, 
@@ -367,27 +361,26 @@ impl NairaWalletExt for DBClient {
                 created_at, 
                 updated_at, 
                 last_activity_at
-            "#,
-            wallet_id,
-            status as WalletStatus
+            "#
         )
+        .bind(wallet_id)
+        .bind(status)
         .fetch_one(&self.pool)
         .await
     }
 
-
     async fn get_wallet_balance(&self, user_id: Uuid) -> Result<i64, Error> {
-        let result = sqlx::query!(
-            "SELECT balance FROM naira_wallets WHERE user_id = $1",
-            user_id
+        let result = sqlx::query(
+            "SELECT balance FROM naira_wallets WHERE user_id = $1"
         )
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
         
-        Ok(result.balance)
+        Ok(result.get::<i64, _>("balance"))
     }
 
-     async fn credit_wallet(
+    async fn credit_wallet(
         &self, 
         user_id: Uuid, 
         amount: i64, 
@@ -400,19 +393,19 @@ impl NairaWalletExt for DBClient {
         let mut tx = self.pool.begin().await?;
         
         // Get current wallet balance
-        let wallet = sqlx::query!(
-            "SELECT id, balance, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE",
-            user_id
+        let wallet = sqlx::query(
+            "SELECT id, balance, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE"
         )
+        .bind(user_id)
         .fetch_one(&mut *tx)
         .await?;
 
-        let balance_before = wallet.balance;
+        let balance_before = wallet.get::<i64, _>("balance");
         let balance_after = balance_before + amount;
-        let available_after = wallet.available_balance + amount;
+        let available_after = wallet.get::<i64, _>("available_balance") + amount;
 
         // Update wallet balance
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE naira_wallets 
             SET balance = $2, 
@@ -421,19 +414,18 @@ impl NairaWalletExt for DBClient {
                 updated_at = NOW(),
                 last_activity_at = NOW()
             WHERE id = $1
-            "#,
-            wallet.id,
-            balance_after,
-            available_after,
-            transaction_type as TransactionType,
-            amount
+            "#
         )
+        .bind(wallet.get::<Uuid, _>("id"))
+        .bind(balance_after)
+        .bind(available_after)
+        .bind(transaction_type)
+        .bind(amount)
         .execute(&mut *tx)
         .await?;
 
-        // Create transaction record - handle all nullable fields
-        let transaction = sqlx::query_as!(
-            WalletTransaction,
+        // Create transaction record
+        let transaction = sqlx::query_as::<_, WalletTransaction>(
             r#"
             INSERT INTO wallet_transactions 
             (wallet_id, user_id, transaction_type, amount, balance_before, balance_after, 
@@ -443,14 +435,14 @@ impl NairaWalletExt for DBClient {
                 id, 
                 wallet_id, 
                 user_id, 
-                transaction_type as "transaction_type: TransactionType",
+                transaction_type,
                 amount, 
                 balance_before, 
                 balance_after, 
-                status as "status: TransactionStatus",
+                status,
                 reference, 
                 external_reference, 
-                payment_method as "payment_method: PaymentMethod",
+                payment_method,
                 description, 
                 metadata, 
                 job_id, 
@@ -459,18 +451,18 @@ impl NairaWalletExt for DBClient {
                 created_at, 
                 updated_at, 
                 completed_at
-            "#,
-            wallet.id,
-            user_id,
-            transaction_type as TransactionType,
-            amount,
-            balance_before,
-            balance_after,
-            reference,
-            external_reference,
-            description,
-            metadata
+            "#
         )
+        .bind(wallet.get::<Uuid, _>("id"))
+        .bind(user_id)
+        .bind(transaction_type)
+        .bind(amount)
+        .bind(balance_before)
+        .bind(balance_after)
+        .bind(reference)
+        .bind(external_reference)
+        .bind(description)
+        .bind(metadata)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -491,24 +483,24 @@ impl NairaWalletExt for DBClient {
         let mut tx = self.pool.begin().await?;
         
         // Get current wallet balance
-        let wallet = sqlx::query!(
-            "SELECT id, balance, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE",
-            user_id
+        let wallet = sqlx::query(
+            "SELECT id, balance, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE"
         )
+        .bind(user_id)
         .fetch_one(&mut *tx)
         .await?;
 
         // Check sufficient balance
-        if wallet.available_balance < amount {
+        if wallet.get::<i64, _>("available_balance") < amount {
             return Err(Error::RowNotFound); // Should be custom error for insufficient funds
         }
 
-        let balance_before = wallet.balance;
+        let balance_before = wallet.get::<i64, _>("balance");
         let balance_after = balance_before - amount;
-        let available_after = wallet.available_balance - amount;
+        let available_after = wallet.get::<i64, _>("available_balance") - amount;
 
         // Update wallet balance
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE naira_wallets 
             SET balance = $2, 
@@ -517,41 +509,55 @@ impl NairaWalletExt for DBClient {
                 updated_at = NOW(),
                 last_activity_at = NOW()
             WHERE id = $1
-            "#,
-            wallet.id,
-            balance_after,
-            available_after,
-            transaction_type as TransactionType,
-            amount
+            "#
         )
+        .bind(wallet.get::<Uuid, _>("id"))
+        .bind(balance_after)
+        .bind(available_after)
+        .bind(transaction_type)
+        .bind(amount)
         .execute(&mut *tx)
         .await?;
 
         // Create transaction record
-        let transaction = sqlx::query_as!(
-            WalletTransaction,
+        let transaction = sqlx::query_as::<_, WalletTransaction>(
             r#"
             INSERT INTO wallet_transactions 
             (wallet_id, user_id, transaction_type, amount, balance_before, balance_after, 
              reference, external_reference, description, metadata, status)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'completed')
-            RETURNING id, wallet_id, user_id, transaction_type as "transaction_type: TransactionType",
-                      amount, balance_before, balance_after, status as "status: TransactionStatus",
-                      reference, external_reference, payment_method as "payment_method: PaymentMethod",
-                      description, metadata, job_id, recipient_wallet_id, fee_amount,
-                      created_at, updated_at, completed_at
-            "#,
-            wallet.id,
-            user_id,
-            transaction_type as TransactionType,
-            amount,
-            balance_before,
-            balance_after,
-            reference,
-            external_reference,
-            description,
-            metadata
+            RETURNING 
+                id, 
+                wallet_id, 
+                user_id, 
+                transaction_type,
+                amount, 
+                balance_before, 
+                balance_after, 
+                status,
+                reference, 
+                external_reference, 
+                payment_method,
+                description, 
+                metadata, 
+                job_id, 
+                recipient_wallet_id, 
+                fee_amount,
+                created_at, 
+                updated_at, 
+                completed_at
+            "#
         )
+        .bind(wallet.get::<Uuid, _>("id"))
+        .bind(user_id)
+        .bind(transaction_type)
+        .bind(amount)
+        .bind(balance_before)
+        .bind(balance_after)
+        .bind(reference)
+        .bind(external_reference)
+        .bind(description)
+        .bind(metadata)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -570,22 +576,22 @@ impl NairaWalletExt for DBClient {
         let mut tx = self.pool.begin().await?;
 
         // Get sender and recipient wallets
-        let sender_wallet = sqlx::query!(
-            "SELECT id, balance, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE",
-            sender_id
+        let sender_wallet = sqlx::query(
+            "SELECT id, balance, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE"
         )
+        .bind(sender_id)
         .fetch_one(&mut *tx)
         .await?;
 
-        let recipient_wallet = sqlx::query!(
-            "SELECT id, balance, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE",
-            recipient_id
+        let recipient_wallet = sqlx::query(
+            "SELECT id, balance, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE"
         )
+        .bind(recipient_id)
         .fetch_one(&mut *tx)
         .await?;
 
         // Check sufficient balance
-        if sender_wallet.available_balance < amount {
+        if sender_wallet.get::<i64, _>("available_balance") < amount {
             return Err(Error::RowNotFound); // Should be custom error
         }
 
@@ -593,94 +599,122 @@ impl NairaWalletExt for DBClient {
         let fee = self.calculate_transaction_fee_internal(TransactionType::Transfer, amount).await?;
         let total_deduction = amount + fee;
 
-        if sender_wallet.available_balance < total_deduction {
+        if sender_wallet.get::<i64, _>("available_balance") < total_deduction {
             return Err(Error::RowNotFound); // Insufficient funds including fee
         }
 
         // Update sender wallet
-        let sender_balance_after = sender_wallet.balance - total_deduction;
-        let sender_available_after = sender_wallet.available_balance - total_deduction;
+        let sender_balance_after = sender_wallet.get::<i64, _>("balance") - total_deduction;
+        let sender_available_after = sender_wallet.get::<i64, _>("available_balance") - total_deduction;
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE naira_wallets 
             SET balance = $2, available_balance = $3, updated_at = NOW(), last_activity_at = NOW()
             WHERE id = $1
-            "#,
-            sender_wallet.id,
-            sender_balance_after,
-            sender_available_after
+            "#
         )
+        .bind(sender_wallet.get::<Uuid, _>("id"))
+        .bind(sender_balance_after)
+        .bind(sender_available_after)
         .execute(&mut *tx)
         .await?;
 
         // Update recipient wallet
-        let recipient_balance_after = recipient_wallet.balance + amount;
-        let recipient_available_after = recipient_wallet.available_balance + amount;
+        let recipient_balance_after = recipient_wallet.get::<i64, _>("balance") + amount;
+        let recipient_available_after = recipient_wallet.get::<i64, _>("available_balance") + amount;
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE naira_wallets 
             SET balance = $2, available_balance = $3, updated_at = NOW(), last_activity_at = NOW()
             WHERE id = $1
-            "#,
-            recipient_wallet.id,
-            recipient_balance_after,
-            recipient_available_after
+            "#
         )
+        .bind(recipient_wallet.get::<Uuid, _>("id"))
+        .bind(recipient_balance_after)
+        .bind(recipient_available_after)
         .execute(&mut *tx)
         .await?;
 
         // Create sender transaction (debit)
-        let sender_tx = sqlx::query_as!(
-            WalletTransaction,
+        let sender_tx = sqlx::query_as::<_, WalletTransaction>(
             r#"
             INSERT INTO wallet_transactions 
             (wallet_id, user_id, transaction_type, amount, balance_before, balance_after, 
              reference, description, recipient_wallet_id, fee_amount, status)
             VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $7, $8, $9, 'completed')
-            RETURNING id, wallet_id, user_id, transaction_type as "transaction_type: TransactionType",
-                      amount, balance_before, balance_after, status as "status: TransactionStatus",
-                      reference, external_reference, payment_method as "payment_method: PaymentMethod",
-                      description, metadata, job_id, recipient_wallet_id, fee_amount,
-                      created_at, updated_at, completed_at
-            "#,
-            sender_wallet.id,
-            sender_id,
-            total_deduction,
-            sender_wallet.balance,
-            sender_balance_after,
-            reference.clone(),
-            format!("Transfer to user: {}", description),
-            recipient_wallet.id,
-            fee
+            RETURNING 
+                id, 
+                wallet_id, 
+                user_id, 
+                transaction_type,
+                amount, 
+                balance_before, 
+                balance_after, 
+                status,
+                reference, 
+                external_reference, 
+                payment_method,
+                description, 
+                metadata, 
+                job_id, 
+                recipient_wallet_id, 
+                fee_amount,
+                created_at, 
+                updated_at, 
+                completed_at
+            "#
         )
+        .bind(sender_wallet.get::<Uuid, _>("id"))
+        .bind(sender_id)
+        .bind(total_deduction)
+        .bind(sender_wallet.get::<i64, _>("balance"))
+        .bind(sender_balance_after)
+        .bind(reference.clone())
+        .bind(format!("Transfer to user: {}", description))
+        .bind(recipient_wallet.get::<Uuid, _>("id"))
+        .bind(fee)
         .fetch_one(&mut *tx)
         .await?;
 
         // Create recipient transaction (credit)
-        let recipient_tx = sqlx::query_as!(
-            WalletTransaction,
+        let recipient_tx = sqlx::query_as::<_, WalletTransaction>(
             r#"
             INSERT INTO wallet_transactions 
             (wallet_id, user_id, transaction_type, amount, balance_before, balance_after, 
              reference, description, recipient_wallet_id, status)
             VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $7, $8, 'completed')
-            RETURNING id, wallet_id, user_id, transaction_type as "transaction_type: TransactionType",
-                      amount, balance_before, balance_after, status as "status: TransactionStatus",
-                      reference, external_reference, payment_method as "payment_method: PaymentMethod",
-                      description, metadata, job_id, recipient_wallet_id, fee_amount,
-                      created_at, updated_at, completed_at
-            "#,
-            recipient_wallet.id,
-            recipient_id,
-            amount,
-            recipient_wallet.balance,
-            recipient_balance_after,
-            reference,
-            format!("Transfer from user: {}", description),
-            sender_wallet.id
+            RETURNING 
+                id, 
+                wallet_id, 
+                user_id, 
+                transaction_type,
+                amount, 
+                balance_before, 
+                balance_after, 
+                status,
+                reference, 
+                external_reference, 
+                payment_method,
+                description, 
+                metadata, 
+                job_id, 
+                recipient_wallet_id, 
+                fee_amount,
+                created_at, 
+                updated_at, 
+                completed_at
+            "#
         )
+        .bind(recipient_wallet.get::<Uuid, _>("id"))
+        .bind(recipient_id)
+        .bind(amount)
+        .bind(recipient_wallet.get::<i64, _>("balance"))
+        .bind(recipient_balance_after)
+        .bind(reference)
+        .bind(format!("Transfer from user: {}", description))
+        .bind(sender_wallet.get::<Uuid, _>("id"))
         .fetch_one(&mut *tx)
         .await?;
 
@@ -699,41 +733,40 @@ impl NairaWalletExt for DBClient {
         let mut tx = self.pool.begin().await?;
 
         // Get wallet and check available balance
-        let wallet = sqlx::query!(
-            "SELECT available_balance FROM naira_wallets WHERE id = $1 FOR UPDATE",
-            wallet_id
+        let wallet = sqlx::query(
+            "SELECT available_balance FROM naira_wallets WHERE id = $1 FOR UPDATE"
         )
+        .bind(wallet_id)
         .fetch_one(&mut *tx)
         .await?;
 
-        if wallet.available_balance < amount {
+        if wallet.get::<i64, _>("available_balance") < amount {
             return Err(Error::RowNotFound); // Insufficient available balance
         }
 
         // Reduce available balance
-        let new_available_balance = wallet.available_balance - amount;
-        sqlx::query!(
-            "UPDATE naira_wallets SET available_balance = $2 WHERE id = $1",
-            wallet_id,
-            new_available_balance
+        let new_available_balance = wallet.get::<i64, _>("available_balance") - amount;
+        sqlx::query(
+            "UPDATE naira_wallets SET available_balance = $2 WHERE id = $1"
         )
+        .bind(wallet_id)
+        .bind(new_available_balance)
         .execute(&mut *tx)
         .await?;
 
         // Create hold record
-        let hold = sqlx::query_as!(
-            WalletHold,
+        let hold = sqlx::query_as::<_, WalletHold>(
             r#"
             INSERT INTO wallet_holds (wallet_id, job_id, amount, reason, expires_at)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id, wallet_id, job_id, amount, reason, status, created_at, expires_at, released_at
-            "#,
-            wallet_id,
-            job_id,
-            amount,
-            reason,
-            expires_at
+            "#
         )
+        .bind(wallet_id)
+        .bind(job_id)
+        .bind(amount)
+        .bind(reason)
+        .bind(expires_at)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -749,38 +782,38 @@ impl NairaWalletExt for DBClient {
         let mut tx = self.pool.begin().await?;
 
         // Get hold details
-        let hold = sqlx::query!(
-            "SELECT wallet_id, amount FROM wallet_holds WHERE id = $1 AND status = 'active'",
-            hold_id
+        let hold = sqlx::query(
+            "SELECT wallet_id, amount FROM wallet_holds WHERE id = $1 AND status = 'active'"
         )
+        .bind(hold_id)
         .fetch_one(&mut *tx)
         .await?;
 
         if release_to_available {
             // Return amount to available balance
-            sqlx::query!(
-                "UPDATE naira_wallets SET available_balance = available_balance + $2 WHERE id = $1",
-                hold.wallet_id,
-                hold.amount
+            sqlx::query(
+                "UPDATE naira_wallets SET available_balance = available_balance + $2 WHERE id = $1"
             )
+            .bind(hold.get::<Uuid, _>("wallet_id"))
+            .bind(hold.get::<i64, _>("amount"))
             .execute(&mut *tx)
             .await?;
         } else {
             // Remove from total balance (funds used)
-            sqlx::query!(
-                "UPDATE naira_wallets SET balance = balance - $2 WHERE id = $1",
-                hold.wallet_id,
-                hold.amount
+            sqlx::query(
+                "UPDATE naira_wallets SET balance = balance - $2 WHERE id = $1"
             )
+            .bind(hold.get::<Uuid, _>("wallet_id"))
+            .bind(hold.get::<i64, _>("amount"))
             .execute(&mut *tx)
             .await?;
         }
 
         // Mark hold as released
-        sqlx::query!(
-            "UPDATE wallet_holds SET status = 'released', released_at = NOW() WHERE id = $1",
-            hold_id
+        sqlx::query(
+            "UPDATE wallet_holds SET status = 'released', released_at = NOW() WHERE id = $1"
         )
+        .bind(hold_id)
         .execute(&mut *tx)
         .await?;
 
@@ -795,31 +828,29 @@ impl NairaWalletExt for DBClient {
     ) -> Result<Vec<WalletHold>, Error> {
         match status {
             Some(hold_status) => {
-                sqlx::query_as!(
-                    WalletHold,
+                sqlx::query_as::<_, WalletHold>(
                     r#"
                     SELECT id, wallet_id, job_id, amount, reason, status, created_at, expires_at, released_at
                     FROM wallet_holds 
                     WHERE wallet_id = $1 AND status = $2
                     ORDER BY created_at DESC
-                    "#,
-                    wallet_id,
-                    hold_status
+                    "#
                 )
+                .bind(wallet_id)
+                .bind(hold_status)
                 .fetch_all(&self.pool)
                 .await
             },
             None => {
-                sqlx::query_as!(
-                    WalletHold,
+                sqlx::query_as::<_, WalletHold>(
                     r#"
                     SELECT id, wallet_id, job_id, amount, reason, status, created_at, expires_at, released_at
                     FROM wallet_holds 
                     WHERE wallet_id = $1
                     ORDER BY created_at DESC
-                    "#,
-                    wallet_id
+                    "#
                 )
+                .bind(wallet_id)
                 .fetch_all(&self.pool)
                 .await
             }
@@ -835,11 +866,12 @@ impl NairaWalletExt for DBClient {
         offset: i64
     ) -> Result<Vec<WalletTransaction>, Error> {
         let mut query = r#"
-            SELECT id, wallet_id, user_id, transaction_type as "transaction_type: TransactionType",
-                   amount, balance_before, balance_after, status as "status: TransactionStatus",
-                   reference, external_reference, payment_method as "payment_method: PaymentMethod",
-                   description, metadata, job_id, recipient_wallet_id, fee_amount,
-                   created_at, updated_at, completed_at
+            SELECT 
+                id, wallet_id, user_id, transaction_type,
+                amount, balance_before, balance_after, status,
+                reference, external_reference, payment_method,
+                description, metadata, job_id, recipient_wallet_id, fee_amount,
+                created_at, updated_at, completed_at
             FROM wallet_transactions 
             WHERE user_id = $1
         "#.to_string();
@@ -902,19 +934,19 @@ impl NairaWalletExt for DBClient {
         &self,
         reference: &str
     ) -> Result<Option<WalletTransaction>, Error> {
-        sqlx::query_as!(
-            WalletTransaction,
+        sqlx::query_as::<_, WalletTransaction>(
             r#"
-            SELECT id, wallet_id, user_id, transaction_type as "transaction_type: TransactionType",
-                   amount, balance_before, balance_after, status as "status: TransactionStatus",
-                   reference, external_reference, payment_method as "payment_method: PaymentMethod",
-                   description, metadata, job_id, recipient_wallet_id, fee_amount,
-                   created_at, updated_at, completed_at
+            SELECT 
+                id, wallet_id, user_id, transaction_type,
+                amount, balance_before, balance_after, status,
+                reference, external_reference, payment_method,
+                description, metadata, job_id, recipient_wallet_id, fee_amount,
+                created_at, updated_at, completed_at
             FROM wallet_transactions 
             WHERE reference = $1
-            "#,
-            reference
+            "#
         )
+        .bind(reference)
         .fetch_optional(&self.pool)
         .await
     }
@@ -925,24 +957,24 @@ impl NairaWalletExt for DBClient {
         status: TransactionStatus,
         external_reference: Option<String>
     ) -> Result<WalletTransaction, Error> {
-        sqlx::query_as!(
-            WalletTransaction,
+        sqlx::query_as::<_, WalletTransaction>(
             r#"
             UPDATE wallet_transactions 
             SET status = $2, external_reference = $3, 
                 completed_at = CASE WHEN $2 = 'completed'::transaction_status THEN NOW() ELSE completed_at END,
                 updated_at = NOW()
             WHERE id = $1
-            RETURNING id, wallet_id, user_id, transaction_type as "transaction_type: TransactionType",
-                      amount, balance_before, balance_after, status as "status: TransactionStatus",
-                      reference, external_reference, payment_method as "payment_method: PaymentMethod",
-                      description, metadata, job_id, recipient_wallet_id, fee_amount,
-                      created_at, updated_at, completed_at
-            "#,
-            transaction_id,
-            status as TransactionStatus,
-            external_reference
+            RETURNING 
+                id, wallet_id, user_id, transaction_type,
+                amount, balance_before, balance_after, status,
+                reference, external_reference, payment_method,
+                description, metadata, job_id, recipient_wallet_id, fee_amount,
+                created_at, updated_at, completed_at
+            "#
         )
+        .bind(transaction_id)
+        .bind(status)
+        .bind(external_reference)
         .fetch_one(&self.pool)
         .await
     }
@@ -955,8 +987,7 @@ impl NairaWalletExt for DBClient {
         bank_code: String,
         bank_name: String
     ) -> Result<BankAccount, Error> {
-        sqlx::query_as!(
-            BankAccount,
+        sqlx::query_as::<_, BankAccount>(
             r#"
             INSERT INTO bank_accounts (user_id, account_name, account_number, bank_code, bank_name)
             VALUES ($1, $2, $3, $4, $5)
@@ -971,24 +1002,22 @@ impl NairaWalletExt for DBClient {
                 is_primary, 
                 created_at, 
                 updated_at
-            "#,
-            user_id,
-            account_name,
-            account_number,
-            bank_code,
-            bank_name
+            "#
         )
+        .bind(user_id)
+        .bind(account_name)
+        .bind(account_number)
+        .bind(bank_code)
+        .bind(bank_name)
         .fetch_one(&self.pool)
         .await
     }
-
 
     async fn verify_bank_account(
         &self,
         account_id: Uuid
     ) -> Result<BankAccount, Error> {
-        sqlx::query_as!(
-            BankAccount,
+        sqlx::query_as::<_, BankAccount>(
             r#"
             UPDATE bank_accounts 
             SET is_verified = true, updated_at = NOW()
@@ -1004,13 +1033,12 @@ impl NairaWalletExt for DBClient {
                 is_primary, 
                 created_at, 
                 updated_at
-            "#,
-            account_id
+            "#
         )
+        .bind(account_id)
         .fetch_one(&self.pool)
         .await
     }
-
 
     async fn set_primary_bank_account(
         &self,
@@ -1020,26 +1048,26 @@ impl NairaWalletExt for DBClient {
         let mut tx = self.pool.begin().await?;
 
         // Remove primary status from all user's accounts
-        sqlx::query!(
-            "UPDATE bank_accounts SET is_primary = false WHERE user_id = $1",
-            user_id
+        sqlx::query(
+            "UPDATE bank_accounts SET is_primary = false WHERE user_id = $1"
         )
+        .bind(user_id)
         .execute(&mut *tx)
         .await?;
 
         // Set new primary account
-        let account = sqlx::query_as!(
-            BankAccount,
+        let account = sqlx::query_as::<_, BankAccount>(
             r#"
             UPDATE bank_accounts 
             SET is_primary = true, updated_at = NOW()
             WHERE id = $1 AND user_id = $2
-            RETURNING id, user_id, account_name, account_number, bank_code, bank_name,
-                      is_verified, is_primary, created_at, updated_at
-            "#,
-            account_id,
-            user_id
+            RETURNING 
+                id, user_id, account_name, account_number, bank_code, bank_name,
+                is_verified, is_primary, created_at, updated_at
+            "#
         )
+        .bind(account_id)
+        .bind(user_id)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -1051,8 +1079,7 @@ impl NairaWalletExt for DBClient {
         &self,
         user_id: Uuid
     ) -> Result<Vec<BankAccount>, Error> {
-        sqlx::query_as!(
-            BankAccount,
+        sqlx::query_as::<_, BankAccount>(
             r#"
             SELECT 
                 id, 
@@ -1068,28 +1095,27 @@ impl NairaWalletExt for DBClient {
             FROM bank_accounts 
             WHERE user_id = $1
             ORDER BY is_primary DESC, created_at DESC
-            "#,
-            user_id
+            "#
         )
+        .bind(user_id)
         .fetch_all(&self.pool)
         .await
     }
-
 
     async fn get_primary_bank_account(
         &self,
         user_id: Uuid
     ) -> Result<Option<BankAccount>, Error> {
-        sqlx::query_as!(
-            BankAccount,
+        sqlx::query_as::<_, BankAccount>(
             r#"
-            SELECT id, user_id, account_name, account_number, bank_code, bank_name,
-                   is_verified, is_primary, created_at, updated_at
+            SELECT 
+                id, user_id, account_name, account_number, bank_code, bank_name,
+                is_verified, is_primary, created_at, updated_at
             FROM bank_accounts 
             WHERE user_id = $1 AND is_primary = true
-            "#,
-            user_id
+            "#
         )
+        .bind(user_id)
         .fetch_optional(&self.pool)
         .await
     }
@@ -1112,61 +1138,67 @@ impl NairaWalletExt for DBClient {
         let user_tier = "basic"; // This should be determined from user verification status
 
         // Get limits for user tier and transaction type
-        let limits = sqlx::query!(
+        let limits = sqlx::query(
             r#"
             SELECT daily_limit, monthly_limit, per_transaction_limit
             FROM wallet_limits 
             WHERE user_tier = $1 AND transaction_type = $2 AND is_active = true
-            "#,
-            user_tier,
-            transaction_type as TransactionType
+            "#
         )
+        .bind(user_tier)
+        .bind(transaction_type)
         .fetch_optional(&self.pool)
         .await?;
 
         if let Some(limit) = limits {
             // Check per transaction limit
-            if amount > limit.per_transaction_limit {
+            if amount > limit.get::<i64, _>("per_transaction_limit") {
                 return Ok(false);
             }
 
             // Check daily limit
-            let today_total = sqlx::query!(
+            let today_total = sqlx::query(
                 r#"
                 SELECT COALESCE(SUM(amount), 0) as total
                 FROM wallet_transactions 
                 WHERE user_id = $1 AND transaction_type = $2 
                 AND DATE(created_at) = CURRENT_DATE
                 AND status = 'completed'
-                "#,
-                user_id,
-                transaction_type as TransactionType
+                "#
             )
+            .bind(user_id)
+            .bind(transaction_type)
             .fetch_one(&self.pool)
             .await?;
 
-        if let Some(total) = today_total.total {
-            if total.to_i64().unwrap_or(0) + amount > limit.daily_limit {
+            let today_total_amount = today_total.get::<Option<BigDecimal>, _>("total")
+                .and_then(|bd| bd.to_i64())
+                .unwrap_or(0);
+
+            if today_total_amount + amount > limit.get::<i64, _>("daily_limit") {
                 return Ok(false);
             }
-        }
 
             // Check monthly limit
-            let month_total = sqlx::query!(
+            let month_total = sqlx::query(
                 r#"
                 SELECT COALESCE(SUM(amount), 0) as total
                 FROM wallet_transactions 
                 WHERE user_id = $1 AND transaction_type = $2 
                 AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
                 AND status = 'completed'
-                "#,
-                user_id,
-                transaction_type as TransactionType
+                "#
             )
+            .bind(user_id)
+            .bind(transaction_type)
             .fetch_one(&self.pool)
             .await?;
 
-            if month_total.total.unwrap_or_else(|| BigDecimal::from(0)).to_i64().unwrap_or(0) + amount > limit.monthly_limit {
+            let month_total_amount = month_total.get::<Option<BigDecimal>, _>("total")
+                .and_then(|bd| bd.to_i64())
+                .unwrap_or(0);
+
+            if month_total_amount + amount > limit.get::<i64, _>("monthly_limit") {
                 return Ok(false);
             }
         }
@@ -1178,39 +1210,41 @@ impl NairaWalletExt for DBClient {
         &self,
         user_id: Uuid
     ) -> Result<WalletSummary, Error> {
-        let wallet = sqlx::query!(
-            "SELECT balance, available_balance, total_deposits, total_withdrawals FROM naira_wallets WHERE user_id = $1",
-            user_id
+        let wallet = sqlx::query(
+            "SELECT balance, available_balance, total_deposits, total_withdrawals FROM naira_wallets WHERE user_id = $1"
         )
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
 
-        let pending_count = sqlx::query!(
-            "SELECT COUNT(*) as count FROM wallet_transactions WHERE user_id = $1 AND status = 'pending'",
-            user_id
+        let pending_count = sqlx::query(
+            "SELECT COUNT(*) as count FROM wallet_transactions WHERE user_id = $1 AND status = 'pending'"
         )
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
 
-        let active_holds = sqlx::query!(
+        let active_holds = sqlx::query(
             r#"
             SELECT COALESCE(SUM(wh.amount), 0) as total
             FROM wallet_holds wh 
             JOIN naira_wallets nw ON wh.wallet_id = nw.id
             WHERE nw.user_id = $1 AND wh.status = 'active'
-            "#,
-            user_id
+            "#
         )
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
 
         Ok(WalletSummary {
-            balance: wallet.balance,
-            available_balance: wallet.available_balance,
-            total_deposits: wallet.total_deposits,
-            total_withdrawals: wallet.total_withdrawals,
-            pending_transactions: pending_count.count.unwrap_or(0),
-            active_holds: active_holds.total.to_i64_or_zero(),
+            balance: wallet.get::<i64, _>("balance"),
+            available_balance: wallet.get::<i64, _>("available_balance"),
+            total_deposits: wallet.get::<i64, _>("total_deposits"),
+            total_withdrawals: wallet.get::<i64, _>("total_withdrawals"),
+            pending_transactions: pending_count.get::<Option<i64>, _>("count").unwrap_or(0),
+            active_holds: active_holds.get::<Option<BigDecimal>, _>("total")
+                .and_then(|bd| bd.to_i64())
+                .unwrap_or(0),
         })
     }
 }
@@ -1222,7 +1256,7 @@ impl DBClient {
         transaction_type: TransactionType,
         amount: i64
     ) -> Result<i64, Error> {
-        let fee_config = sqlx::query!(
+        let fee_config = sqlx::query(
             r#"
             SELECT fee_type, fee_value
             FROM transaction_fees 
@@ -1230,19 +1264,19 @@ impl DBClient {
             AND min_amount <= $2 AND max_amount >= $2
             ORDER BY min_amount DESC
             LIMIT 1
-            "#,
-            transaction_type as TransactionType,
-            amount
+            "#
         )
+        .bind(transaction_type)
+        .bind(amount)
         .fetch_optional(&self.pool)
         .await?;
 
         if let Some(config) = fee_config {
-            match config.fee_type.as_str() {
-                "fixed" => Ok(config.fee_value),
+            match config.get::<String, _>("fee_type").as_str() {
+                "fixed" => Ok(config.get::<i64, _>("fee_value")),
                 "percentage" => {
                     // fee_value is in basis points (1/100th of a percent)
-                    let fee = (amount * config.fee_value) / 10000;
+                    let fee = (amount * config.get::<i64, _>("fee_value")) / 10000;
                     Ok(fee)
                 },
                 _ => Ok(0)

@@ -1,6 +1,8 @@
+// db/userdb.rs
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
+use sqlx::Row;
 
 use super::db::DBClient;
 
@@ -251,8 +253,7 @@ impl UserExt for DBClient {
         verification_token: T,
         token_expires_at: DateTime<Utc>,
     ) -> Result<User, sqlx::Error> {
-        sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
             UPDATE users 
             SET verification_token = $2,
@@ -261,40 +262,40 @@ impl UserExt for DBClient {
             WHERE id = $1
             RETURNING 
                 id, name, username, email, password,
-                role as "role: UserRole",
+                role,
                 trust_score, verified,
-                verification_type as "verification_type: VerificationType",
+                verification_type,
                 referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
+                wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                 verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>",
-                updated_at as "updated_at!: DateTime<Utc>"
-            "#,
-            user_id,
-            verification_token.into(),
-            token_expires_at,
+                created_at,
+                updated_at
+            "#
         )
+        .bind(user_id)
+        .bind(verification_token.into())
+        .bind(token_expires_at)
         .fetch_one(&self.pool)
         .await
     }
 
     async fn get_available_verifiers(&self) -> Result<Vec<User>, sqlx::Error> {
-        sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
-            SELECT id, name, username, email, password,
-                role as "role: UserRole",
+            SELECT 
+                id, name, username, email, password,
+                role,
                 trust_score, verified,
-                verification_type as "verification_type: VerificationType",
+                verification_type,
                 referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
+                wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                 verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>",
-                updated_at as "updated_at!: DateTime<Utc>"
+                created_at,
+                updated_at
             FROM users
             WHERE role = 'verifier'::user_role
             AND id NOT IN (
@@ -302,52 +303,53 @@ impl UserExt for DBClient {
                 FROM disputes 
                 WHERE status = 'open' AND assigned_verifier IS NOT NULL
             )
-            "#,
+            "#
         )
         .fetch_all(&self.pool)
         .await
     }
 
     async fn get_admin_user(&self) -> Result<Option<User>, sqlx::Error> {
-        sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
-            SELECT id, name, username, email, password,
-                role as "role: UserRole",
+            SELECT 
+                id, name, username, email, password,
+                role,
                 trust_score, verified,
-                verification_type as "verification_type: VerificationType",
+                verification_type,
                 referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
+                wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                 verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>",
-                updated_at as "updated_at!: DateTime<Utc>"
+                created_at,
+                updated_at
             FROM users
             WHERE role = 'admin'::user_role
             LIMIT 1
-            "#,
+            "#
         )
         .fetch_optional(&self.pool)
         .await
     }
 
     async fn assign_verifier_to_dispute(&self, dispute_id: Uuid, verifier_id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE disputes
             SET assigned_verifier = $1,
                 status = 'under_review'::dispute_status
             WHERE id = $2
-            "#,
-            verifier_id,
-            dispute_id
+            "#
         )
+        .bind(verifier_id)
+        .bind(dispute_id)
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
+
     async fn get_user(
         &self,
         user_id: Option<Uuid>,
@@ -358,85 +360,91 @@ impl UserExt for DBClient {
         let mut user: Option<User> = None;
 
         if let Some(user_id) = user_id {
-            user = sqlx::query_as!(
-                User,
-               r#"
-            SELECT 
-                id, name, username, email, password,
-                role as "role: UserRole", trust_score, verified,
-                verification_type as "verification_type: VerificationType",
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>", 
-                updated_at as "updated_at!: DateTime<Utc>"
-            FROM users
-            WHERE id = $1"#,
-                user_id
-            ).fetch_optional(&self.pool).await?;
-        } else if let Some(username) = username {
-            user = sqlx::query_as!(
-                User,
+            user = sqlx::query_as::<_, User>(
                 r#"
-            SELECT 
-                id, name, username, email, password,
-                role as "role: UserRole", trust_score, verified,
-                verification_type as "verification_type: VerificationType",
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>", 
-                updated_at as "updated_at!: DateTime<Utc>"
-            FROM users 
-            WHERE username = $1"#,
-                username
-            ).fetch_optional(&self.pool).await?;
-        } else if let Some(email) = email {
-            user = sqlx::query_as!(
-                User,
-                r#"
-            SELECT 
-                id, name, username, email, password,
-                role as "role: UserRole", trust_score, verified,
-                verification_type as "verification_type: VerificationType",
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>", 
-                updated_at as "updated_at!: DateTime<Utc>"
-            FROM users 
-            WHERE email = $1"#,
-                email
-            ).fetch_optional(&self.pool).await?;
-        } else if let Some(token) = token {
-            user = sqlx::query_as!(
-                User,
-                r#"
-            SELECT 
-                id, name, username, email, password,
-                role as "role: UserRole", trust_score, verified,
-                verification_type as "verification_type: VerificationType",
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>", 
-                updated_at as "updated_at!: DateTime<Utc>"
-            FROM users 
-            WHERE verification_token = $1"#,
-                token
+                SELECT 
+                    id, name, username, email, password,
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality,
+                    dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    created_at, 
+                    updated_at
+                FROM users
+                WHERE id = $1
+                "#
             )
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        } else if let Some(username) = username {
+            user = sqlx::query_as::<_, User>(
+                r#"
+                SELECT 
+                    id, name, username, email, password,
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality,
+                    dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    created_at, 
+                    updated_at
+                FROM users 
+                WHERE username = $1
+                "#
+            )
+            .bind(username)
+            .fetch_optional(&self.pool)
+            .await?;
+        } else if let Some(email) = email {
+            user = sqlx::query_as::<_, User>(
+                r#"
+                SELECT 
+                    id, name, username, email, password,
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality,
+                    dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    created_at, 
+                    updated_at
+                FROM users 
+                WHERE email = $1
+                "#
+            )
+            .bind(email)
+            .fetch_optional(&self.pool)
+            .await?;
+        } else if let Some(token) = token {
+            user = sqlx::query_as::<_, User>(
+                r#"
+                SELECT 
+                    id, name, username, email, password,
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality,
+                    dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    created_at, 
+                    updated_at
+                FROM users 
+                WHERE verification_token = $1
+                "#
+            )
+            .bind(token)
             .fetch_optional(&self.pool)
             .await?;
         }
@@ -451,29 +459,28 @@ impl UserExt for DBClient {
     ) -> Result<Vec<User>, sqlx::Error> {
         let offset = (page - 1) * limit as u32;
 
-        let users = sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
-        SELECT 
-            id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
-        FROM users
-        ORDER BY created_at DESC LIMIT $1 OFFSET $2"#,
-            limit as i64,
-            offset as i64,
-        ).fetch_all(&self.pool)
-        .await?;
-
-        Ok(users)
+            SELECT 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at, 
+                updated_at
+            FROM users
+            ORDER BY created_at DESC LIMIT $1 OFFSET $2
+            "#
+        )
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await
     }
 
     async fn save_user<T: Into<String> + Send>(
@@ -485,42 +492,43 @@ impl UserExt for DBClient {
         verification_token: T,
         token_expires_at: DateTime<Utc>,
     ) -> Result<User, sqlx::Error> {
-        let user = sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
-        INSERT INTO users (name, username, email, password, verification_token, token_expires_at, verification_status) 
-        VALUES ($1, $2, $3, $4, $5, $6, 'unverified'::verification_status) 
-        RETURNING id, name, username, email, password,
-        role as "role: UserRole", trust_score, verified,
-        verification_type as "verification_type: VerificationType",
-        referral_code, referral_count, google_id, avatar_url,
-        wallet_address, verification_status as "verification_status: VerificationStatus",
-        nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-        verification_number, nationality,
-        dob, lga, transaction_pin, next_of_kin,
-        verification_token, token_expires_at,
-        created_at as "created_at!: DateTime<Utc>", 
-        updated_at as "updated_at!: DateTime<Utc>"
-        "#,
-            name.into(),
-            username.into(),
-            email.into(),
-            password.into(),
-            verification_token.into(),
-            token_expires_at
-        ).fetch_one(&self.pool)
-        .await?;
-        Ok(user)
+            INSERT INTO users (name, username, email, password, verification_token, token_expires_at, verification_status) 
+            VALUES ($1, $2, $3, $4, $5, $6, 'unverified'::verification_status) 
+            RETURNING 
+                id, name, username, email, password,
+                role,
+                trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
+        )
+        .bind(name.into())
+        .bind(username.into())
+        .bind(email.into())
+        .bind(password.into())
+        .bind(verification_token.into())
+        .bind(token_expires_at)
+        .fetch_one(&self.pool)
+        .await
     }
 
     async fn get_user_count(&self) -> Result<i64, sqlx::Error> {
-        let count = sqlx::query_scalar!(
+        let count :i64 = sqlx::query_scalar(
             r#"SELECT COUNT(*) FROM users"#
         )
-       .fetch_one(&self.pool)
-       .await?;
+        .fetch_one(&self.pool)
+        .await?;
 
-        Ok(count.unwrap_or(0))
+        Ok(count)
     }
 
     async fn update_user_name<T: Into<String> + Send>(
@@ -528,30 +536,29 @@ impl UserExt for DBClient {
         user_id: Uuid,
         new_name: T
     ) -> Result<User, sqlx::Error> {
-        let user = sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
             UPDATE users
             SET name = $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
-            "#,
-            new_name.into(),
-            user_id
-        ).fetch_one(&self.pool)
-        .await?;
-
-        Ok(user)
+            RETURNING 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
+        )
+        .bind(new_name.into())
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
     }
 
     async fn update_user_role(
@@ -559,30 +566,29 @@ impl UserExt for DBClient {
         target_id: Uuid,
         new_role: UserRole
     ) -> Result<User, sqlx::Error> {
-        let user = sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
             UPDATE users
             SET role = $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
-            "#,
-            new_role as UserRole,
-            target_id
-        ).fetch_one(&self.pool)
-       .await?;
-
-        Ok(user)
+            RETURNING 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
+        )
+        .bind(new_role)
+        .bind(target_id)
+        .fetch_one(&self.pool)
+        .await
     }
 
     async fn update_user_password(
@@ -590,37 +596,36 @@ impl UserExt for DBClient {
         user_id: Uuid,
         new_password: String
     ) -> Result<User, sqlx::Error> {
-        let user = sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
             UPDATE users
             SET password = $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
-            "#,
-            new_password,
-            user_id
-        ).fetch_one(&self.pool)
-        .await?;
-
-        Ok(user)
+            RETURNING 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
+        )
+        .bind(new_password)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
     }
 
     async fn verifed_token(
         &self,
         token: &str,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE users
             SET verified = true, 
@@ -628,10 +633,11 @@ impl UserExt for DBClient {
                 verification_token = NULL,
                 token_expires_at = NULL
             WHERE verification_token = $1
-            "#,
-            token
-        ).execute(&self.pool)
-       .await?;
+            "#
+        )
+        .bind(token)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -642,17 +648,18 @@ impl UserExt for DBClient {
         token: &str,
         token_expires_at: DateTime<Utc>,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE users
             SET verification_token = $1, token_expires_at = $2, updated_at = NOW()
             WHERE id = $3
-            "#,
-            token,
-            token_expires_at,
-            user_id,
-        ).execute(&self.pool)
-       .await?;
+            "#
+        )
+        .bind(token)
+        .bind(token_expires_at)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -662,84 +669,82 @@ impl UserExt for DBClient {
         user_id: Uuid,
         score_to_add: i32,
     ) -> Result<User, sqlx::Error> {
-        let user = sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
             UPDATE users
             SET trust_score = trust_score + $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
-            "#,
-            score_to_add,
-            user_id
-        ).fetch_one(&self.pool)
-        .await?;
-
-        Ok(user)
+            RETURNING 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
+        )
+        .bind(score_to_add)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
     }
 
     async fn get_users_by_trustscore(
         &self,
         limit: i64
     ) -> Result<Vec<User>, sqlx::Error> {
-        let users = sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
-            SELECT id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
+            SELECT 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
             FROM users 
             ORDER BY trust_score DESC 
             LIMIT $1
-            "#,
-            limit
-        ).fetch_all(&self.pool)
-        .await?;
-
-        Ok(users)
+            "#
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
     }
-
 
     async fn get_user_by_referral_code(
         &self,
         referral_code: &str,
     ) -> Result<Option<User>, sqlx::Error> {
-        sqlx::query_as!(
-            User,
-            r#"SELECT 
+        sqlx::query_as::<_, User>(
+            r#"
+            SELECT 
                 id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
             FROM users 
-            WHERE referral_code = $1"#,
-            referral_code
+            WHERE referral_code = $1
+            "#
         )
+        .bind(referral_code)
         .fetch_optional(&self.pool)
         .await
     }
@@ -749,27 +754,27 @@ impl UserExt for DBClient {
         user_id: Uuid,
         referral_code: String,
     ) -> Result<User, sqlx::Error> {
-        sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
             UPDATE users
             SET referral_code = $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
-            "#,
-            referral_code,
-            user_id
+            RETURNING 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
         )
+        .bind(referral_code)
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await
     }
@@ -779,76 +784,75 @@ impl UserExt for DBClient {
         referrer_id: Uuid,
         points: i32,
     ) -> Result<User, sqlx::Error> {
-        sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
             UPDATE users
             SET trust_score = trust_score + $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
-            "#,
-            points,
-            referrer_id
+            RETURNING 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
         )
+        .bind(points)
+        .bind(referrer_id)
         .fetch_one(&self.pool)
         .await
     }
 
-   async fn create_referral_record(
-    &self,
-    referrer_id: Uuid,  
-    referee_id: Uuid,
-    points: i32
-) -> Result<Referral, sqlx::Error> {
-    sqlx::query_as!(
-        Referral,
-        r#"
-        INSERT INTO referrals (referrer_id, referee_id, points_awarded)
-        VALUES ($1, $2, $3)
-        RETURNING id, referrer_id, referee_id, points_awarded, created_at
-        "#,
-        referrer_id,  
-        referee_id,
-        points
-    )
-    .fetch_one(&self.pool)
-    .await
-}
+    async fn create_referral_record(
+        &self,
+        referrer_id: Uuid,  
+        referee_id: Uuid,
+        points: i32
+    ) -> Result<Referral, sqlx::Error> {
+        sqlx::query_as::<_, Referral>(
+            r#"
+            INSERT INTO referrals (referrer_id, referee_id, points_awarded)
+            VALUES ($1, $2, $3)
+            RETURNING id, referrer_id, referee_id, points_awarded, created_at
+            "#
+        )
+        .bind(referrer_id)
+        .bind(referee_id)
+        .bind(points)
+        .fetch_one(&self.pool)
+        .await
+    }
 
     async fn increment_referral_count(
         &self,
         user_id: Uuid,
     ) -> Result<User, sqlx::Error> {
-        sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
             UPDATE users
             SET referral_count = referral_count + 1, updated_at = NOW()
             WHERE id = $1
-            RETURNING id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
-            "#,
-            user_id
+            RETURNING 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
         )
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await
     }
@@ -858,42 +862,41 @@ impl UserExt for DBClient {
         user_id: Uuid,
     ) -> Result<ReferralStats, sqlx::Error> {
         // Get total referrals and points
-        let stats = sqlx::query!(
+        let stats = sqlx::query(
             r#"
             SELECT 
                 COUNT(*) as total_referrals,
                 COALESCE(SUM(points_awarded), 0) as total_points_earned
             FROM referrals 
             WHERE referrer_id = $1
-            "#,
-            user_id
+            "#
         )
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
 
         // Get successful referrals with user details
-        let successful_referrals = sqlx::query_as!(
-                ReferralUser,
-                r#"
-                SELECT 
-                    u.id as "id!",
-                    u.name as "name!",
-                    u.username as "username!",
-                    u.email as "email!",
-                    r.created_at as "joined_at!"
-                FROM referrals r
-                JOIN users u ON r.referee_id = u.id
-                WHERE r.referrer_id = $1
-                ORDER BY r.created_at DESC
-                "#,
-                user_id
-            )
-            .fetch_all(&self.pool)
-            .await?;
+        let successful_referrals = sqlx::query_as::<_, ReferralUser>(
+            r#"
+            SELECT 
+                u.id,
+                u.name,
+                u.username,
+                u.email,
+                r.created_at as joined_at
+            FROM referrals r
+            JOIN users u ON r.referee_id = u.id
+            WHERE r.referrer_id = $1
+            ORDER BY r.created_at DESC
+            "#
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(ReferralStats {
-            total_referrals: stats.total_referrals.unwrap_or(0),
-            total_points_earned: stats.total_points_earned.unwrap_or(0),
+            total_referrals: stats.get::<i64, _>("total_referrals"),
+            total_points_earned: stats.get::<i64, _>("total_points_earned"),
             successful_referrals,
         })
     }
@@ -902,15 +905,14 @@ impl UserExt for DBClient {
         &self,
         referee_id: Uuid,
     ) -> Result<Option<Referral>, sqlx::Error> {
-        sqlx::query_as!(
-            Referral,
+        sqlx::query_as::<_, Referral>(
             r#"
             SELECT id, referrer_id, referee_id, points_awarded, created_at
             FROM referrals
             WHERE referee_id = $1
-            "#,
-            referee_id
+            "#
         )
+        .bind(referee_id)
         .fetch_optional(&self.pool)
         .await
     }
@@ -919,25 +921,25 @@ impl UserExt for DBClient {
         &self,
         google_id: &str,
     ) -> Result<Option<User>, sqlx::Error> {
-        sqlx::query_as!(
-            User,
-            r#"SELECT
+        sqlx::query_as::<_, User>(
+            r#"
+            SELECT
                 id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality,
-            dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
             FROM users
             WHERE google_id = $1
-            "#,
-            google_id
+            "#
         )
+        .bind(google_id)
         .fetch_optional(&self.pool)
         .await
     }
@@ -954,29 +956,30 @@ impl UserExt for DBClient {
         let username = email.split("@").next().unwrap_or("user");
         let username = format!("{}_{}", username, chrono::Utc::now().timestamp());
 
-        sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
-                INSERT INTO users (name, username, email, google_id, avatar_url, trust_score, verified, verification_status)
-                VALUES ($1, $2, $3, $4, $5, $6, true, 'unverified'::verification_status)
-                RETURNING id, name, username, email, password,
-                role as "role: UserRole", trust_score, verified,
-                verification_type as "verification_type: VerificationType",
+            INSERT INTO users (name, username, email, google_id, avatar_url, trust_score, verified, verification_status)
+            VALUES ($1, $2, $3, $4, $5, $6, true, 'unverified'::verification_status)
+            RETURNING 
+                id, name, username, email, password,
+                role,
+                trust_score, verified,
+                verification_type,
                 referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
+                wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                 verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>",
-                updated_at as "updated_at!: DateTime<Utc>"
-            "#,
-            name,
-            username,
-            email,
-            google_id,
-            avatar_url,
-            trust_points,
+                created_at,
+                updated_at
+            "#
         )
+        .bind(name)
+        .bind(username)
+        .bind(email)
+        .bind(google_id)
+        .bind(avatar_url)
+        .bind(trust_points)
         .fetch_one(&self.pool)
         .await
     }
@@ -986,23 +989,28 @@ impl UserExt for DBClient {
         user_id: Uuid,
         wallet_address: String,
     ) -> Result<User, sqlx::Error> {
-        sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
-                UPDATE users
-                SET wallet_address = $1, updated_at = NOW()
-                WHERE id = $2
-                RETURNING id, name, username, email, password, role as "role: UserRole",
-                trust_score, verified, verification_type as "verification_type: VerificationType",
-                referral_code, referral_count, google_id, avatar_url, wallet_address, verification_status as "verification_status: VerificationStatus",
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark, verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin, verification_token, token_expires_at, 
-                created_at as "created_at!: DateTime<Utc>",
-                updated_at as "updated_at!: DateTime<Utc>" 
-            "#,
-            wallet_address,
-            user_id
+            UPDATE users
+            SET wallet_address = $1, updated_at = NOW()
+            WHERE id = $2
+            RETURNING 
+                id, name, username, email, password,
+                role,
+                trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality,
+                dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
         )
+        .bind(wallet_address)
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await
     }
@@ -1015,20 +1023,19 @@ impl UserExt for DBClient {
         let wallet_type = wallet_request.wallet_type.unwrap_or_else(|| "primary".to_string());
         let blockchain = wallet_request.blockchain.unwrap_or_else(|| "ethereum".to_string());
 
-        sqlx::query_as!(
-            UserWallet,
+        sqlx::query_as::<_, UserWallet>(
             r#"
-                INSERT INTO user_wallets (user_id, wallet_address, wallet_type, blockchain)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (user_id, wallet_type) DO UPDATE
-                SET wallet_address = $2, updated_at = NOW()
-                RETURNING id, user_id, wallet_address, wallet_type, blockchain, is_verified, created_at, updated_at
-            "#,
-            user_id,
-            wallet_request.wallet_address,
-            wallet_type,
-            blockchain
+            INSERT INTO user_wallets (user_id, wallet_address, wallet_type, blockchain)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, wallet_type) DO UPDATE
+            SET wallet_address = $2, updated_at = NOW()
+            RETURNING id, user_id, wallet_address, wallet_type, blockchain, is_verified, created_at, updated_at
+            "#
         )
+        .bind(user_id)
+        .bind(wallet_request.wallet_address)
+        .bind(wallet_type)
+        .bind(blockchain)
         .fetch_one(&self.pool)
         .await
     }
@@ -1037,16 +1044,15 @@ impl UserExt for DBClient {
         &self,
         user_id: Uuid,
     ) -> Result<Vec<UserWallet>, sqlx::Error> {
-        sqlx::query_as!(
-            UserWallet,
+        sqlx::query_as::<_, UserWallet>(
             r#"
-                SELECT id, user_id, wallet_address, wallet_type, blockchain, is_verified, created_at, updated_at
-                FROM user_wallets
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-            "#,
-            user_id
+            SELECT id, user_id, wallet_address, wallet_type, blockchain, is_verified, created_at, updated_at
+            FROM user_wallets
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            "#
         )
+        .bind(user_id)
         .fetch_all(&self.pool)
         .await
     }
@@ -1055,15 +1061,14 @@ impl UserExt for DBClient {
         &self,
         user_id: Uuid,
     ) -> Result<Option<UserWallet>, sqlx::Error> {
-        sqlx::query_as!(
-            UserWallet,
+        sqlx::query_as::<_, UserWallet>(
             r#"
-                SELECT id, user_id, wallet_address, wallet_type, blockchain, is_verified, created_at, updated_at
-                FROM user_wallets
-                WHERE user_id = $1 AND wallet_type = 'primary'
-            "#,
-            user_id
+            SELECT id, user_id, wallet_address, wallet_type, blockchain, is_verified, created_at, updated_at
+            FROM user_wallets
+            WHERE user_id = $1 AND wallet_type = 'primary'
+            "#
         )
+        .bind(user_id)
         .fetch_optional(&self.pool)
         .await
     }
@@ -1073,17 +1078,16 @@ impl UserExt for DBClient {
         user_id: Uuid,
         wallet_address: String,
     ) -> Result<UserWallet, sqlx::Error> {
-        sqlx::query_as!(
-            UserWallet,
+        sqlx::query_as::<_, UserWallet>(
             r#"
-                UPDATE user_wallets
-                SET is_verified = true, updated_at = NOW()
-                WHERE user_id = $1 AND wallet_address = $2
-                RETURNING id, user_id, wallet_address, wallet_type, blockchain, is_verified, created_at, updated_at
-            "#,
-            user_id,
-            wallet_address
+            UPDATE user_wallets
+            SET is_verified = true, updated_at = NOW()
+            WHERE user_id = $1 AND wallet_address = $2
+            RETURNING id, user_id, wallet_address, wallet_type, blockchain, is_verified, created_at, updated_at
+            "#
         )
+        .bind(user_id)
+        .bind(wallet_address)
         .fetch_one(&self.pool)
         .await
     }
@@ -1092,24 +1096,25 @@ impl UserExt for DBClient {
         &self,
         wallet_address: &str,
     ) -> Result<Option<User>, sqlx::Error> {
-        sqlx::query_as!(
-            User,
-            r#"SELECT 
+        sqlx::query_as::<_, User>(
+            r#"
+            SELECT 
                 id, name, username, email, password,
-                role as "role: UserRole", trust_score, verified,
-                verification_type as "verification_type: VerificationType",
+                role, trust_score, verified,
+                verification_type,
                 referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
+                wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality,
                 dob, lga, transaction_pin, next_of_kin,
                 verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>", 
-                updated_at as "updated_at!: DateTime<Utc>"
+                created_at,
+                updated_at
             FROM users 
-            WHERE wallet_address = $1"#,
-            wallet_address
+            WHERE wallet_address = $1
+            "#
         )
+        .bind(wallet_address)
         .fetch_optional(&self.pool)
         .await
     }
@@ -1119,19 +1124,19 @@ impl UserExt for DBClient {
         user_id: Uuid,
         nonce: i64,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query!(
+        sqlx::query(
             r#"
-                INSERT INTO wallet_verification_nonces (user_id, nonce, expires_at)
-                VALUES ($1, $2, NOW() + INTERVAL '5 minutes')
-                ON CONFLICT (user_id)
-                DO UPDATE SET
-                    nonce = $2,
-                    expires_at = NOW() + INTERVAL '5 minutes',
-                    updated_at = NOW()
-            "#,
-            user_id,
-            nonce
+            INSERT INTO wallet_verification_nonces (user_id, nonce, expires_at)
+            VALUES ($1, $2, NOW() + INTERVAL '5 minutes')
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                nonce = $2,
+                expires_at = NOW() + INTERVAL '5 minutes',
+                updated_at = NOW()
+            "#
         )
+        .bind(user_id)
+        .bind(nonce)
         .execute(&self.pool)
         .await?;
 
@@ -1142,20 +1147,20 @@ impl UserExt for DBClient {
         &self,
         user_id: Uuid,
     ) -> Result<i64, sqlx::Error> {
-        let record = sqlx::query!(
+        let record = sqlx::query(
             r#"
-                SELECT nonce 
-                FROM wallet_verification_nonces
-                WHERE user_id = $1
-                AND expires_at > NOW()
-            "#,
-            user_id
+            SELECT nonce 
+            FROM wallet_verification_nonces
+            WHERE user_id = $1
+            AND expires_at > NOW()
+            "#
         )
+        .bind(user_id)
         .fetch_optional(&self.pool)
         .await?;
 
         match record {
-            Some(record) => Ok(record.nonce),
+            Some(record) => Ok(record.get::<i64, _>("nonce")),
             None => Err(sqlx::Error::RowNotFound),
         }
     }
@@ -1164,101 +1169,98 @@ impl UserExt for DBClient {
         &self,
         user_id: Uuid,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query!(
+        sqlx::query(
             r#"
-                DELETE FROM wallet_verification_nonces
-                WHERE user_id = $1
-            "#,
-            user_id
+            DELETE FROM wallet_verification_nonces
+            WHERE user_id = $1
+            "#
         )
+        .bind(user_id)
         .execute(&self.pool)
         .await?;
 
-    Ok(())
+        Ok(())
     }
 
     async fn update_user_verification_data(
-    &self,
-    user_id: Uuid,
-    verification_status: VerificationStatus,
-    verification_number: Option<String>,
-    verification_type: VerificationType,
-    verification_document_id: Option<String>,
-    facial_verification_id: Option<String>,
-    nationality: Option<String>,
-    dob: Option<DateTime<Utc>>,
-    lga: Option<String>,
-    nearest_landmark: Option<String>,
-) -> Result<User, sqlx::Error> {
-
-    sqlx::query_as!(
-        User,
-        r#"
-        UPDATE users 
-        SET 
-            verification_status = $2,
-            verification_number = COALESCE($3, verification_number),
-            verification_type = COALESCE($4, verification_type),
-            verification_document_id = COALESCE($5, verification_document_id),
-            facial_verification_id = COALESCE($6, facial_verification_id),
-            nationality = COALESCE($7, nationality),
-            dob = COALESCE($8, dob),
-            lga = COALESCE($9, lga),
-            nearest_landmark = COALESCE($10, nearest_landmark),
-            updated_at = NOW()
-        WHERE id = $1
-        RETURNING 
-            id, name, username, email, password,
-            role as "role: UserRole",
-            trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>",
-            updated_at as "updated_at!: DateTime<Utc>"
-        "#,
-        user_id,
-        verification_status as VerificationStatus,
-        verification_number,
-        verification_type as VerificationType, // Use the converted parameter
-        verification_document_id,
-        facial_verification_id,
-        nationality,
-        dob,
-        lga,
-        nearest_landmark,
-    )
-    .fetch_one(&self.pool)
-    .await
-}
+        &self,
+        user_id: Uuid,
+        verification_status: VerificationStatus,
+        verification_number: Option<String>,
+        verification_type: VerificationType,
+        verification_document_id: Option<String>,
+        facial_verification_id: Option<String>,
+        nationality: Option<String>,
+        dob: Option<DateTime<Utc>>,
+        lga: Option<String>,
+        nearest_landmark: Option<String>,
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            r#"
+            UPDATE users 
+            SET 
+                verification_status = $2,
+                verification_number = COALESCE($3, verification_number),
+                verification_type = COALESCE($4, verification_type),
+                verification_document_id = COALESCE($5, verification_document_id),
+                facial_verification_id = COALESCE($6, facial_verification_id),
+                nationality = COALESCE($7, nationality),
+                dob = COALESCE($8, dob),
+                lga = COALESCE($9, lga),
+                nearest_landmark = COALESCE($10, nearest_landmark),
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING 
+                id, name, username, email, password,
+                role,
+                trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
+        )
+        .bind(user_id)
+        .bind(verification_status)
+        .bind(verification_number)
+        .bind(verification_type)
+        .bind(verification_document_id)
+        .bind(facial_verification_id)
+        .bind(nationality)
+        .bind(dob)
+        .bind(lga)
+        .bind(nearest_landmark)
+        .fetch_one(&self.pool)
+        .await
+    }
 
     async fn get_user_by_verification_number(
         &self,
         verification_number: &str,
     ) -> Result<Option<User>, sqlx::Error> {
-        sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
             SELECT 
                 id, name, username, email, password,
-                role as "role: UserRole", trust_score, verified,
-                verification_type as "verification_type: VerificationType",
+                role, trust_score, verified,
+                verification_type,
                 referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
+                wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                 verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>", 
-                updated_at as "updated_at!: DateTime<Utc>"
+                created_at,
+                updated_at
             FROM users 
             WHERE verification_number = $1 
                 OR nin_number = $1
-            "#,
-            verification_number
+            "#
         )
+        .bind(verification_number)
         .fetch_optional(&self.pool)
         .await
     }
@@ -1268,26 +1270,26 @@ impl UserExt for DBClient {
         user_id: Uuid,
         avatar_url: String,
     ) -> Result<User, sqlx::Error> {
-        sqlx::query_as!(
-            User,
+        sqlx::query_as::<_, User>(
             r#"
             UPDATE users
             SET avatar_url = $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, username, email, password,
-            role as "role: UserRole", trust_score, verified,
-            verification_type as "verification_type: VerificationType",
-            referral_code, referral_count, google_id, avatar_url,
-            wallet_address, verification_status as "verification_status: VerificationStatus",
-            nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-            verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
-            verification_token, token_expires_at,
-            created_at as "created_at!: DateTime<Utc>", 
-            updated_at as "updated_at!: DateTime<Utc>"
-            "#,
-            avatar_url,
-            user_id
+            RETURNING 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at,
+                updated_at
+            "#
         )
+        .bind(avatar_url)
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await
     }

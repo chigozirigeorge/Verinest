@@ -18,7 +18,7 @@ pub struct ReferralStats {
     pub successful_referrals: Vec<ReferralUser>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, sqlx::FromRow, sqlx::Type,)]
 pub struct ReferralUser {
     pub id: Uuid,
     pub name: String,

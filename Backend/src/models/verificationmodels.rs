@@ -45,7 +45,7 @@ pub struct DocumentVerificationRequest {
     pub selfie_image: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
 pub struct VerificationDocument {
     pub id: Uuid,
     pub user_id: Uuid,
@@ -97,7 +97,7 @@ pub struct OtpVerificationRequest {
     pub purpose: OtpPurpose,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
 pub struct OtpRecord {
     pub id: Uuid,
     pub user_id: Uuid,
