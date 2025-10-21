@@ -4,11 +4,18 @@ set -e
 echo "=== Building verinest ==="
 cargo build --release
 
-echo "=== Finding binary ==="
-# Find the actual binary location
-find target/ -name "verinest" -type f 2>/dev/null || echo "Binary not found with find"
+echo "=== Copying binary to /bin directory ==="
+# Create bin directory if it doesn't exist
+mkdir -p bin
 
-# List all binaries in release
-find target/release/ -maxdepth 1 -type f -executable 2>/dev/null || echo "No executables in release"
+# Copy the binary to where Railway expects it
+cp target/release/verinest bin/verinest
+
+# Make sure it's executable
+chmod +x bin/verinest
+
+echo "=== Verification ==="
+echo "Contents of bin/:"
+ls -la bin/
 
 echo "=== Build completed ==="
