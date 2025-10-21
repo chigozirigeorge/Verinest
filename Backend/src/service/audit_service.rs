@@ -190,83 +190,159 @@ impl AuditService {
         ).await
     }
 
+    // async fn log_audit_event(
+    //     &self,
+    //     user_id: Uuid,
+    //     event_type: String,
+    //     job_id: Option<Uuid>,
+    //     related_user_id: Option<Uuid>,
+    //     metadata: Option<serde_json::Value>,
+    //     description: String,
+    // ) -> Result<(), ServiceError> {
+    //     sqlx::query!(
+    //         r#"
+    //         INSERT INTO audit_logs 
+    //         (user_id, event_type, job_id, related_user_id, metadata, description, created_at)
+    //         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+    //         "#,
+    //         user_id,
+    //         event_type,
+    //         job_id,
+    //         related_user_id,
+    //         metadata,
+    //         description
+    //     )
+    //     .execute(&self.db_client.pool)
+    //     .await?;
+
+    //     Ok(())
+    // }
+
+    // pub async fn get_audit_logs_for_job(
+    //     &self,
+    //     job_id: Uuid,
+    //     limit: i64,
+    //     offset: i64,
+    // ) -> Result<Vec<AuditLog>, ServiceError> {
+    //     let logs = sqlx::query_as!(
+    //         AuditLog,
+    //         r#"
+    //         SELECT id, user_id, event_type, job_id, related_user_id, metadata, description, created_at
+    //         FROM audit_logs 
+    //         WHERE job_id = $1
+    //         ORDER BY created_at DESC
+    //         LIMIT $2 OFFSET $3
+    //         "#,
+    //         job_id,
+    //         limit,
+    //         offset
+    //     )
+    //     .fetch_all(&self.db_client.pool)
+    //     .await?;
+
+    //     Ok(logs)
+    // }
+
+    // pub async fn get_audit_logs_for_user(
+    //     &self,
+    //     user_id: Uuid,
+    //     limit: i64,
+    //     offset: i64,
+    // ) -> Result<Vec<AuditLog>, ServiceError> {
+    //     let logs = sqlx::query_as!(
+    //         AuditLog,
+    //         r#"
+    //         SELECT id, user_id, event_type, job_id, related_user_id, metadata, description, created_at
+    //         FROM audit_logs 
+    //         WHERE user_id = $1 OR related_user_id = $1
+    //         ORDER BY created_at DESC
+    //         LIMIT $2 OFFSET $3
+    //         "#,
+    //         user_id,
+    //         limit,
+    //         offset
+    //     )
+    //     .fetch_all(&self.db_client.pool)
+    //     .await?;
+
+    //     Ok(logs)
+    // }
+
     async fn log_audit_event(
-        &self,
-        user_id: Uuid,
-        event_type: String,
-        job_id: Option<Uuid>,
-        related_user_id: Option<Uuid>,
-        metadata: Option<serde_json::Value>,
-        description: String,
-    ) -> Result<(), ServiceError> {
-        sqlx::query!(
-            r#"
-            INSERT INTO audit_logs 
-            (user_id, event_type, job_id, related_user_id, metadata, description, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, NOW())
-            "#,
-            user_id,
-            event_type,
-            job_id,
-            related_user_id,
-            metadata,
-            description
-        )
-        .execute(&self.db_client.pool)
-        .await?;
+    &self,
+    user_id: Uuid,
+    event_type: String,
+    job_id: Option<Uuid>,
+    related_user_id: Option<Uuid>,
+    metadata: Option<serde_json::Value>,
+    description: String,
+) -> Result<(), ServiceError> {
+    sqlx::query(
+        r#"
+        INSERT INTO audit_logs 
+        (user_id, event_type, job_id, related_user_id, metadata, description, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        "#
+    )
+    .bind(user_id)
+    .bind(event_type)
+    .bind(job_id)
+    .bind(related_user_id)
+    .bind(metadata)
+    .bind(description)
+    .execute(&self.db_client.pool)
+    .await?;
 
-        Ok(())
-    }
+    Ok(())
+}
 
-    pub async fn get_audit_logs_for_job(
-        &self,
-        job_id: Uuid,
-        limit: i64,
-        offset: i64,
-    ) -> Result<Vec<AuditLog>, ServiceError> {
-        let logs = sqlx::query_as!(
-            AuditLog,
-            r#"
-            SELECT id, user_id, event_type, job_id, related_user_id, metadata, description, created_at
-            FROM audit_logs 
-            WHERE job_id = $1
-            ORDER BY created_at DESC
-            LIMIT $2 OFFSET $3
-            "#,
-            job_id,
-            limit,
-            offset
-        )
-        .fetch_all(&self.db_client.pool)
-        .await?;
+pub async fn get_audit_logs_for_job(
+    &self,
+    job_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AuditLog>, ServiceError> {
+    let logs = sqlx::query_as::<_, AuditLog>(
+        r#"
+        SELECT id, user_id, event_type, job_id, related_user_id, metadata, description, created_at
+        FROM audit_logs 
+        WHERE job_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3
+        "#
+    )
+    .bind(job_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&self.db_client.pool)
+    .await?;
 
-        Ok(logs)
-    }
+    Ok(logs)
+}
 
-    pub async fn get_audit_logs_for_user(
-        &self,
-        user_id: Uuid,
-        limit: i64,
-        offset: i64,
-    ) -> Result<Vec<AuditLog>, ServiceError> {
-        let logs = sqlx::query_as!(
-            AuditLog,
-            r#"
-            SELECT id, user_id, event_type, job_id, related_user_id, metadata, description, created_at
-            FROM audit_logs 
-            WHERE user_id = $1 OR related_user_id = $1
-            ORDER BY created_at DESC
-            LIMIT $2 OFFSET $3
-            "#,
-            user_id,
-            limit,
-            offset
-        )
-        .fetch_all(&self.db_client.pool)
-        .await?;
+pub async fn get_audit_logs_for_user(
+    &self,
+    user_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AuditLog>, ServiceError> {
+    let logs = sqlx::query_as::<_, AuditLog>(
+        r#"
+        SELECT id, user_id, event_type, job_id, related_user_id, metadata, description, created_at
+        FROM audit_logs 
+        WHERE user_id = $1 OR related_user_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3
+        "#
+    )
+    .bind(user_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&self.db_client.pool)
+    .await?;
 
-        Ok(logs)
-    }
+    Ok(logs)
+}
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]

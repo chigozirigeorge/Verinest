@@ -200,97 +200,189 @@ impl NotificationService {
         ).await
     }
 
+    // async fn store_notification(
+    //     &self,
+    //     user_id: Option<Uuid>,
+    //     notification_type: String,
+    //     job_id: Option<Uuid>,
+    //     metadata: Option<serde_json::Value>,
+    //     message: String,
+    // ) -> Result<(), ServiceError> {
+    //     if let Some(uid) = user_id {
+    //         sqlx::query!(
+    //             r#"
+    //             INSERT INTO notifications 
+    //             (user_id, type, job_id, metadata, message, created_at)
+    //             VALUES ($1, $2, $3, $4, $5, NOW())
+    //             "#,
+    //             uid,
+    //             notification_type,
+    //             job_id,
+    //             metadata,
+    //             message
+    //         )
+    //         .execute(&self.db_client.pool)
+    //         .await?;
+    //     }
+    //     // For broadcast notifications, you'd insert for multiple users
+
+    //     Ok(())
+    // }
+
+    // pub async fn get_user_notifications(
+    //     &self,
+    //     user_id: Uuid,
+    //     limit: i64,
+    //     offset: i64,
+    // ) -> Result<Vec<UserNotification>, ServiceError> {
+    //     let notifications = sqlx::query_as!(
+    //         UserNotification,
+    //         r#"
+    //         SELECT id, user_id, type, job_id, metadata, message, is_read, created_at
+    //         FROM notifications 
+    //         WHERE user_id = $1
+    //         ORDER BY created_at DESC
+    //         LIMIT $2 OFFSET $3
+    //         "#,
+    //         user_id,
+    //         limit,
+    //         offset
+    //     )
+    //     .fetch_all(&self.db_client.pool)
+    //     .await?;
+
+    //     Ok(notifications)
+    // }
+
+    // pub async fn mark_notification_read(
+    //     &self,
+    //     notification_id: Uuid,
+    //     user_id: Uuid,
+    // ) -> Result<(), ServiceError> {
+    //     sqlx::query!(
+    //         r#"
+    //         UPDATE notifications 
+    //         SET is_read = true
+    //         WHERE id = $1 AND user_id = $2
+    //         "#,
+    //         notification_id,
+    //         user_id
+    //     )
+    //     .execute(&self.db_client.pool)
+    //     .await?;
+
+    //     Ok(())
+    // }
+
+    // pub async fn mark_all_notifications_read(
+    //     &self,
+    //     user_id: Uuid,
+    // ) -> Result<(), ServiceError> {
+    //     sqlx::query!(
+    //         r#"
+    //         UPDATE notifications 
+    //         SET is_read = true
+    //         WHERE user_id = $1 AND is_read = false
+    //         "#,
+    //         user_id
+    //     )
+    //     .execute(&self.db_client.pool)
+    //     .await?;
+
+    //     Ok(())
+    // }
+
+
     async fn store_notification(
-        &self,
-        user_id: Option<Uuid>,
-        notification_type: String,
-        job_id: Option<Uuid>,
-        metadata: Option<serde_json::Value>,
-        message: String,
-    ) -> Result<(), ServiceError> {
-        if let Some(uid) = user_id {
-            sqlx::query!(
-                r#"
-                INSERT INTO notifications 
-                (user_id, type, job_id, metadata, message, created_at)
-                VALUES ($1, $2, $3, $4, $5, NOW())
-                "#,
-                uid,
-                notification_type,
-                job_id,
-                metadata,
-                message
-            )
-            .execute(&self.db_client.pool)
-            .await?;
-        }
-        // For broadcast notifications, you'd insert for multiple users
-
-        Ok(())
-    }
-
-    pub async fn get_user_notifications(
-        &self,
-        user_id: Uuid,
-        limit: i64,
-        offset: i64,
-    ) -> Result<Vec<UserNotification>, ServiceError> {
-        let notifications = sqlx::query_as!(
-            UserNotification,
+    &self,
+    user_id: Option<Uuid>,
+    notification_type: String,
+    job_id: Option<Uuid>,
+    metadata: Option<serde_json::Value>,
+    message: String,
+) -> Result<(), ServiceError> {
+    if let Some(uid) = user_id {
+        sqlx::query(
             r#"
-            SELECT id, user_id, type, job_id, metadata, message, is_read, created_at
-            FROM notifications 
-            WHERE user_id = $1
-            ORDER BY created_at DESC
-            LIMIT $2 OFFSET $3
-            "#,
-            user_id,
-            limit,
-            offset
+            INSERT INTO notifications 
+            (user_id, type, job_id, metadata, message, created_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+            "#
         )
-        .fetch_all(&self.db_client.pool)
-        .await?;
-
-        Ok(notifications)
-    }
-
-    pub async fn mark_notification_read(
-        &self,
-        notification_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<(), ServiceError> {
-        sqlx::query!(
-            r#"
-            UPDATE notifications 
-            SET is_read = true
-            WHERE id = $1 AND user_id = $2
-            "#,
-            notification_id,
-            user_id
-        )
+        .bind(uid)
+        .bind(notification_type)
+        .bind(job_id)
+        .bind(metadata)
+        .bind(message)
         .execute(&self.db_client.pool)
         .await?;
-
-        Ok(())
     }
+    // For broadcast notifications, you'd insert for multiple users
 
-    pub async fn mark_all_notifications_read(
-        &self,
-        user_id: Uuid,
-    ) -> Result<(), ServiceError> {
-        sqlx::query!(
-            r#"
-            UPDATE notifications 
-            SET is_read = true
-            WHERE user_id = $1 AND is_read = false
-            "#,
-            user_id
-        )
-        .execute(&self.db_client.pool)
-        .await?;
+    Ok(())
+}
 
-        Ok(())
-    }
+pub async fn get_user_notifications(
+    &self,
+    user_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<UserNotification>, ServiceError> {
+    let notifications = sqlx::query_as::<_, UserNotification>(
+        r#"
+        SELECT id, user_id, type, job_id, metadata, message, is_read, created_at
+        FROM notifications 
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3
+        "#
+    )
+    .bind(user_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&self.db_client.pool)
+    .await?;
+
+    Ok(notifications)
+}
+
+pub async fn mark_notification_read(
+    &self,
+    notification_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), ServiceError> {
+    sqlx::query(
+        r#"
+        UPDATE notifications 
+        SET is_read = true
+        WHERE id = $1 AND user_id = $2
+        "#
+    )
+    .bind(notification_id)
+    .bind(user_id)
+    .execute(&self.db_client.pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn mark_all_notifications_read(
+    &self,
+    user_id: Uuid,
+) -> Result<(), ServiceError> {
+    sqlx::query(
+        r#"
+        UPDATE notifications 
+        SET is_read = true
+        WHERE user_id = $1 AND is_read = false
+        "#
+    )
+    .bind(user_id)
+    .execute(&self.db_client.pool)
+    .await?;
+
+    Ok(())
+}
 
     // In notification_service.rs - Add new notification methods
 pub async fn notify_job_application(

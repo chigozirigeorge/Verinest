@@ -50,21 +50,39 @@ impl TrustService {
             employer_points += 5;
         }
 
+        // // Award points to worker
+        // sqlx::query!(
+        //     "UPDATE users SET trust_score = trust_score + $1 WHERE id = $2",
+        //     worker_points,
+        //     worker_id
+        // )
+        // .execute(&mut *tx)
+        // .await?;
+
+        // // Award points to employer
+        // sqlx::query!(
+        //     "UPDATE users SET trust_score = trust_score + $1 WHERE id = $2",
+        //     employer_points,
+        //     employer_id
+        // )
+        // .execute(&mut *tx)
+        // .await?;
+
         // Award points to worker
-        sqlx::query!(
-            "UPDATE users SET trust_score = trust_score + $1 WHERE id = $2",
-            worker_points,
-            worker_id
+        sqlx::query(
+            "UPDATE users SET trust_score = trust_score + $1 WHERE id = $2"
         )
+        .bind(worker_points)
+        .bind(worker_id)
         .execute(&mut *tx)
         .await?;
 
         // Award points to employer
-        sqlx::query!(
-            "UPDATE users SET trust_score = trust_score + $1 WHERE id = $2",
-            employer_points,
-            employer_id
+        sqlx::query(
+            "UPDATE users SET trust_score = trust_score + $1 WHERE id = $2"
         )
+        .bind(employer_points)
+        .bind(employer_id)
         .execute(&mut *tx)
         .await?;
 
@@ -97,12 +115,21 @@ impl TrustService {
     ) -> Result<(), ServiceError> {
         let mut tx = self.db_client.pool.begin().await?;
 
+        // // Ensure trust score doesn't go below 0
+        // sqlx::query!(
+        //     "UPDATE users SET trust_score = GREATEST(0, trust_score - $1) WHERE id = $2",
+        //     points,
+        //     user_id
+        // )
+        // .execute(&mut *tx)
+        // .await?;
+
         // Ensure trust score doesn't go below 0
-        sqlx::query!(
-            "UPDATE users SET trust_score = GREATEST(0, trust_score - $1) WHERE id = $2",
-            points,
-            user_id
+        sqlx::query(
+            "UPDATE users SET trust_score = GREATEST(0, trust_score - $1) WHERE id = $2"
         )
+        .bind(points)
+        .bind(user_id)
         .execute(&mut *tx)
         .await?;
 
@@ -146,6 +173,62 @@ impl TrustService {
         })
     }
 
+    // async fn log_trust_event(
+    //     &self,
+    //     user_id: Uuid,
+    //     category: String,
+    //     points: i32,
+    //     reason: String,
+    //     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    // ) -> Result<(), ServiceError> {
+    //     sqlx::query!(
+    //         r#"
+    //         INSERT INTO trust_events (user_id, category, points, reason, created_at)
+    //         VALUES ($1, $2, $3, $4, NOW())
+    //         "#,
+    //         user_id,
+    //         category,
+    //         points,
+    //         reason
+    //     )
+    //     .execute(&mut **tx)
+    //     .await?;
+
+    //     Ok(())
+    // }
+
+    // async fn get_user_jobs(&self, user_id: Uuid) -> Result<Vec<UserJob>, ServiceError> {
+    //     // Get jobs where user is either employer or worker
+    //     let jobs = sqlx::query_as!(
+    //         UserJob,
+    //         r#"
+    //         SELECT 
+    //             j.id,
+    //             j.employer_id,
+    //             j.assigned_worker_id,
+    //             j.status as "status: JobStatus",
+    //             j.created_at,
+    //             j.updated_at,
+    //             j.deadline,
+    //             jp.progress_percentage,
+    //             jp.submitted_at as last_progress_date
+    //         FROM jobs j
+    //         LEFT JOIN (
+    //             SELECT job_id, progress_percentage, submitted_at,
+    //             ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY submitted_at DESC) as rn
+    //             FROM job_progress
+    //         ) jp ON j.id = jp.job_id AND jp.rn = 1
+    //         WHERE j.employer_id = $1 OR j.assigned_worker_id = $1
+    //         "#,
+    //         user_id
+    //     )
+    //     .fetch_all(&self.db_client.pool)
+    //     .await?;
+
+    //     Ok(jobs)
+    // }
+
+
     async fn log_trust_event(
         &self,
         user_id: Uuid,
@@ -154,16 +237,16 @@ impl TrustService {
         reason: String,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<(), ServiceError> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO trust_events (user_id, category, points, reason, created_at)
             VALUES ($1, $2, $3, $4, NOW())
-            "#,
-            user_id,
-            category,
-            points,
-            reason
+            "#
         )
+        .bind(user_id)
+        .bind(category)
+        .bind(points)
+        .bind(reason)
         .execute(&mut **tx)
         .await?;
 
@@ -172,14 +255,13 @@ impl TrustService {
 
     async fn get_user_jobs(&self, user_id: Uuid) -> Result<Vec<UserJob>, ServiceError> {
         // Get jobs where user is either employer or worker
-        let jobs = sqlx::query_as!(
-            UserJob,
+        let jobs = sqlx::query_as::<_, UserJob>(
             r#"
             SELECT 
                 j.id,
                 j.employer_id,
                 j.assigned_worker_id,
-                j.status as "status: JobStatus",
+                j.status,
                 j.created_at,
                 j.updated_at,
                 j.deadline,
@@ -192,9 +274,9 @@ impl TrustService {
                 FROM job_progress
             ) jp ON j.id = jp.job_id AND jp.rn = 1
             WHERE j.employer_id = $1 OR j.assigned_worker_id = $1
-            "#,
-            user_id
+            "#
         )
+        .bind(user_id)
         .fetch_all(&self.db_client.pool)
         .await?;
 
@@ -206,28 +288,48 @@ impl TrustService {
             .map_err(ServiceError::from)
     }
 
-    async fn get_user_disputes(&self, user_id: Uuid) -> Result<Vec<UserDispute>, ServiceError> {
-        let disputes = sqlx::query_as!(
-            UserDispute,
-            r#"
-            SELECT 
-                d.id,
-                d.raised_by,
-                d.against,
-                d.status as "status: DisputeStatus",
-                d.resolution,
-                d.created_at,
-                d.resolved_at
-            FROM disputes d
-            WHERE d.raised_by = $1 OR d.against = $1
-            "#,
-            user_id
-        )
-        .fetch_all(&self.db_client.pool)
-        .await?;
+    // async fn get_user_disputes(&self, user_id: Uuid) -> Result<Vec<UserDispute>, ServiceError> {
+    //     let disputes = sqlx::query_as!(
+    //         UserDispute,
+    //         r#"
+    //         SELECT 
+    //             d.id,
+    //             d.raised_by,
+    //             d.against,
+    //             d.status as "status: DisputeStatus",
+    //             d.resolution,
+    //             d.created_at,
+    //             d.resolved_at
+    //         FROM disputes d
+    //         WHERE d.raised_by = $1 OR d.against = $1
+    //         "#,
+    //         user_id
+    //     )
+    //     .fetch_all(&self.db_client.pool)
+    //     .await?;
 
-        Ok(disputes)
+    async fn get_user_disputes(&self, user_id: Uuid) -> Result<Vec<UserDispute>, ServiceError> {
+        let disputes = sqlx::query_as::<_, UserDispute>(
+        r#"
+        SELECT 
+            d.id,
+            d.raised_by,
+            d.against,
+            d.status,
+            d.resolution,
+            d.created_at,
+            d.resolved_at
+        FROM disputes d
+        WHERE d.raised_by = $1 OR d.against = $1
+        "#
+    )
+    .bind(user_id)
+    .fetch_all(&self.db_client.pool)
+    .await?;
+
+    Ok(disputes)
     }
+      
 
     fn calculate_completion_rate(&self, jobs: &[UserJob]) -> f32 {
         if jobs.is_empty() {

@@ -174,22 +174,42 @@ pub async fn initiate_deposit(
         .ok_or_else(|| HttpError::not_found("Wallet not found"))?;
 
     // Create transaction record with pending status
-    let tx_result = sqlx::query!(
+    // let tx_result = sqlx::query!(
+    //     r#"
+    //     INSERT INTO wallet_transactions 
+    //     (wallet_id, user_id, transaction_type, amount, balance_before, balance_after,
+    //      reference, description, status, payment_method)
+    //     VALUES ($1, $2, 'deposit', $3, $4, $4, $5, $6, 'pending', $7)
+    //     RETURNING id
+    //     "#,
+    //     wallet.id,
+    //     auth.user.id,
+    //     amount_kobo,
+    //     wallet.balance,
+    //     reference,
+    //     body.description,
+    //     body.payment_method as PaymentMethod
+    // )
+    // .fetch_one(&app_state.db_client.pool)
+    // .await
+    // .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let tx_result = sqlx::query_as::<_, (Uuid,)>(
         r#"
         INSERT INTO wallet_transactions 
         (wallet_id, user_id, transaction_type, amount, balance_before, balance_after,
-         reference, description, status, payment_method)
+        reference, description, status, payment_method)
         VALUES ($1, $2, 'deposit', $3, $4, $4, $5, $6, 'pending', $7)
         RETURNING id
-        "#,
-        wallet.id,
-        auth.user.id,
-        amount_kobo,
-        wallet.balance,
-        reference,
-        body.description,
-        body.payment_method as PaymentMethod
-    )
+        "#
+     )
+    .bind(wallet.id)
+    .bind(auth.user.id)
+    .bind(amount_kobo)
+    .bind(wallet.balance)
+    .bind(reference)
+    .bind(body.description)
+    .bind(body.payment_method)
     .fetch_one(&app_state.db_client.pool)
     .await
     .map_err(|e| HttpError::server_error(e.to_string()))?;
