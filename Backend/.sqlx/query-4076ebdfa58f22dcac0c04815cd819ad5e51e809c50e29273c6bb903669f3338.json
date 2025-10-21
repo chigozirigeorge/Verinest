@@ -1,0 +1,106 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                id, user_id, \n                document_type as \"document_type: VerificationType\",\n                document_id, document_url, selfie_url,\n                status as \"status: VerificationStatus\",\n                reviewed_by, review_notes, created_at, updated_at\n            FROM verification_documents\n            WHERE status = 'pending'\n            ORDER BY created_at ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "document_type: VerificationType",
+        "type_info": {
+          "Custom": {
+            "name": "verification_type",
+            "kind": {
+              "Enum": [
+                "national_id",
+                "driver_license",
+                "passport"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "document_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "document_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "selfie_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "status: VerificationStatus",
+        "type_info": {
+          "Custom": {
+            "name": "verification_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "submitted",
+                "processing",
+                "approved",
+                "rejected",
+                "expired",
+                "unverified"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "reviewed_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 8,
+        "name": "review_notes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "4076ebdfa58f22dcac0c04815cd819ad5e51e809c50e29273c6bb903669f3338"
+}

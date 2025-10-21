@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE naira_wallets \n            SET balance = $2, available_balance = $3, updated_at = NOW(), last_activity_at = NOW()\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "83172e752e31c5e1cfd0248d348b09979fdef9617e0488447816dba71da21c56"
+}

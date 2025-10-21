@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE users\n            SET verification_status = $1, updated_at = NOW()\n            WHERE id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "verification_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "submitted",
+                "processing",
+                "approved",
+                "rejected",
+                "expired",
+                "unverified"
+              ]
+            }
+          }
+        },
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8f2d7a3a3351c79124a0d0d4010457a2c147cf0df4d5fbec839a154bda72b00d"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE wallet_holds SET status = 'released', released_at = NOW() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e617805aa72dd4b2b36af42db62d1b3011a7e73c772fef31cee2625ef32d50dc"
+}

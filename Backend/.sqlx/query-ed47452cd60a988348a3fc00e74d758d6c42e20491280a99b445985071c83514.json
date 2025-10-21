@@ -1,0 +1,84 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                j.id,\n                j.employer_id,\n                j.assigned_worker_id,\n                j.status as \"status: JobStatus\",\n                j.created_at,\n                j.updated_at,\n                j.deadline,\n                jp.progress_percentage,\n                jp.submitted_at as last_progress_date\n            FROM jobs j\n            LEFT JOIN (\n                SELECT job_id, progress_percentage, submitted_at,\n                ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY submitted_at DESC) as rn\n                FROM job_progress\n            ) jp ON j.id = jp.job_id AND jp.rn = 1\n            WHERE j.employer_id = $1 OR j.assigned_worker_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employer_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "assigned_worker_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "status: JobStatus",
+        "type_info": {
+          "Custom": {
+            "name": "job_status",
+            "kind": {
+              "Enum": [
+                "open",
+                "in_progress",
+                "under_review",
+                "completed",
+                "disputed",
+                "cancelled"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "deadline",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "progress_percentage",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 8,
+        "name": "last_progress_date",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "ed47452cd60a988348a3fc00e74d758d6c42e20491280a99b445985071c83514"
+}

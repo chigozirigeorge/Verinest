@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                d.id,\n                d.raised_by,\n                d.against,\n                d.status as \"status: DisputeStatus\",\n                d.resolution,\n                d.created_at,\n                d.resolved_at\n            FROM disputes d\n            WHERE d.raised_by = $1 OR d.against = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "raised_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "against",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "status: DisputeStatus",
+        "type_info": {
+          "Custom": {
+            "name": "dispute_status",
+            "kind": {
+              "Enum": [
+                "open",
+                "under_review",
+                "resolved",
+                "escalated"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "resolution",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "resolved_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "31d87c4d2cdd56098b699b643df60546661afa2701ab56809a00714738ce0922"
+}

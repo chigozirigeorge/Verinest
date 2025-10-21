@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM otp_codes\n            WHERE expires_at < NOW() OR used = true\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "23a32ce52f27cfb127b2256406aabcf6e1d278273272688bd5f549b6e333f683"
+}

@@ -1,0 +1,230 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE jobs \n            SET status = $2, updated_at = NOW()\n            WHERE id = $1\n            RETURNING id, employer_id, assigned_worker_id, category as \"category: WorkerCategory\",\n            title, description, location_state, location_city, location_address, budget,\n            estimated_duration_days, status as \"status: JobStatus\", \n            payment_status as \"payment_status: PaymentStatus\", escrow_amount, platform_fee,\n            partial_payment_allowed, partial_payment_percentage, created_at, updated_at, deadline\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employer_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "assigned_worker_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "category: WorkerCategory",
+        "type_info": {
+          "Custom": {
+            "name": "worker_category",
+            "kind": {
+              "Enum": [
+                "painter",
+                "plumber",
+                "electrician",
+                "carpenter",
+                "mason",
+                "tiler",
+                "roofer",
+                "interior_decorator",
+                "landscaper",
+                "cleaner",
+                "security_guard",
+                "other",
+                "welder",
+                "steel_bender",
+                "concrete_worker",
+                "bricklayer",
+                "flooring_specialist",
+                "glazier",
+                "furniture_maker",
+                "upholsterer",
+                "curtain_blind_installer",
+                "wallpaper_specialist",
+                "gardener",
+                "fence_installer",
+                "swimming_pool_technician",
+                "outdoor_lighting_specialist",
+                "real_estate_agent",
+                "property_manager",
+                "facility_manager",
+                "building_inspector",
+                "quantity_surveyor",
+                "architect",
+                "civil_engineer",
+                "structural_engineer",
+                "handyman",
+                "hvac_technician",
+                "elevator_technician",
+                "security_system_installer",
+                "pest_control_specialist",
+                "demolition_expert",
+                "site_supervisor",
+                "construction_laborer",
+                "safety_officer",
+                "fire_safety_officer"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "title",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "location_state",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "location_city",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "location_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "budget",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 10,
+        "name": "estimated_duration_days",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 11,
+        "name": "status: JobStatus",
+        "type_info": {
+          "Custom": {
+            "name": "job_status",
+            "kind": {
+              "Enum": [
+                "open",
+                "in_progress",
+                "under_review",
+                "completed",
+                "disputed",
+                "cancelled"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "payment_status: PaymentStatus",
+        "type_info": {
+          "Custom": {
+            "name": "payment_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "escrowed",
+                "partially_paid",
+                "completed",
+                "refunded"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "escrow_amount",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 14,
+        "name": "platform_fee",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 15,
+        "name": "partial_payment_allowed",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 16,
+        "name": "partial_payment_percentage",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 17,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 18,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 19,
+        "name": "deadline",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        {
+          "Custom": {
+            "name": "job_status",
+            "kind": {
+              "Enum": [
+                "open",
+                "in_progress",
+                "under_review",
+                "completed",
+                "disputed",
+                "cancelled"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "d4347763a90a87cbe317af8a9d1f242292848e3f35b2c4d78fa6b73614f31e9b"
+}

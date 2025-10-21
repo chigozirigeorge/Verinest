@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT balance, available_balance, total_deposits, total_withdrawals FROM naira_wallets WHERE user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "balance",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "available_balance",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_deposits",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "total_withdrawals",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "23983b6a19468d82ed85754c8c318287e7051063e8e1407eca7968173b00d3f0"
+}

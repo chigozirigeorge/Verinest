@@ -1,0 +1,101 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE disputes \n            SET resolution = $2, status = 'resolved'::dispute_status, resolved_at = NOW()\n            WHERE id = $1\n            RETURNING id, job_id, raised_by, against, reason, description, \n            evidence_urls, status as \"status: DisputeStatus\", assigned_verifier, \n            resolution, created_at, resolved_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "raised_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "against",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "reason",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "evidence_urls",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 7,
+        "name": "status: DisputeStatus",
+        "type_info": {
+          "Custom": {
+            "name": "dispute_status",
+            "kind": {
+              "Enum": [
+                "open",
+                "under_review",
+                "resolved",
+                "escalated"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "assigned_verifier",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 9,
+        "name": "resolution",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "resolved_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "41281365670de716980d282fe198c2407274f6874e0662a63f4923d0e50a73cf"
+}

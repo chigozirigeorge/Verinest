@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT jc.*\n            FROM job_contracts jc\n            JOIN jobs j ON jc.job_id = j.id\n            WHERE jc.employer_id = $1 AND j.status IN ('in_progress', 'under_review')\n            ORDER BY jc.contract_date DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "employer_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "worker_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "agreed_rate",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 5,
+        "name": "agreed_timeline",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "terms",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "signed_by_employer",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "signed_by_worker",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "contract_date",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "38e57d5fbd8d23f3cea07038d727b9d3797ea6e294ba1d60448468178f92f56c"
+}

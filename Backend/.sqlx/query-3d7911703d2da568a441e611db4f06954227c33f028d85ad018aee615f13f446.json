@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT update_worker_rating($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "update_worker_rating",
+        "type_info": "Void"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "3d7911703d2da568a441e611db4f06954227c33f028d85ad018aee615f13f446"
+}

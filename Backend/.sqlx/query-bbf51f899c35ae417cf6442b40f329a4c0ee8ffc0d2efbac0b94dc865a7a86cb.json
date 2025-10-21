@@ -1,0 +1,211 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO worker_profiles\n            (user_id, category, experience_years, description, hourly_rate, daily_rate, location_state, location_city)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n            RETURNING \n                id, user_id, \n                category as \"category: WorkerCategory\", \n                experience_years, description, \n                hourly_rate, daily_rate, \n                location_state, location_city, \n                is_available, rating, completed_jobs, \n                created_at, updated_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "category: WorkerCategory",
+        "type_info": {
+          "Custom": {
+            "name": "worker_category",
+            "kind": {
+              "Enum": [
+                "painter",
+                "plumber",
+                "electrician",
+                "carpenter",
+                "mason",
+                "tiler",
+                "roofer",
+                "interior_decorator",
+                "landscaper",
+                "cleaner",
+                "security_guard",
+                "other",
+                "welder",
+                "steel_bender",
+                "concrete_worker",
+                "bricklayer",
+                "flooring_specialist",
+                "glazier",
+                "furniture_maker",
+                "upholsterer",
+                "curtain_blind_installer",
+                "wallpaper_specialist",
+                "gardener",
+                "fence_installer",
+                "swimming_pool_technician",
+                "outdoor_lighting_specialist",
+                "real_estate_agent",
+                "property_manager",
+                "facility_manager",
+                "building_inspector",
+                "quantity_surveyor",
+                "architect",
+                "civil_engineer",
+                "structural_engineer",
+                "handyman",
+                "hvac_technician",
+                "elevator_technician",
+                "security_system_installer",
+                "pest_control_specialist",
+                "demolition_expert",
+                "site_supervisor",
+                "construction_laborer",
+                "safety_officer",
+                "fire_safety_officer"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "experience_years",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "hourly_rate",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "daily_rate",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 7,
+        "name": "location_state",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "location_city",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "is_available",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "rating",
+        "type_info": "Float4"
+      },
+      {
+        "ordinal": 11,
+        "name": "completed_jobs",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        {
+          "Custom": {
+            "name": "worker_category",
+            "kind": {
+              "Enum": [
+                "painter",
+                "plumber",
+                "electrician",
+                "carpenter",
+                "mason",
+                "tiler",
+                "roofer",
+                "interior_decorator",
+                "landscaper",
+                "cleaner",
+                "security_guard",
+                "other",
+                "welder",
+                "steel_bender",
+                "concrete_worker",
+                "bricklayer",
+                "flooring_specialist",
+                "glazier",
+                "furniture_maker",
+                "upholsterer",
+                "curtain_blind_installer",
+                "wallpaper_specialist",
+                "gardener",
+                "fence_installer",
+                "swimming_pool_technician",
+                "outdoor_lighting_specialist",
+                "real_estate_agent",
+                "property_manager",
+                "facility_manager",
+                "building_inspector",
+                "quantity_surveyor",
+                "architect",
+                "civil_engineer",
+                "structural_engineer",
+                "handyman",
+                "hvac_technician",
+                "elevator_technician",
+                "security_system_installer",
+                "pest_control_specialist",
+                "demolition_expert",
+                "site_supervisor",
+                "construction_laborer",
+                "safety_officer",
+                "fire_safety_officer"
+              ]
+            }
+          }
+        },
+        "Int4",
+        "Text",
+        "Numeric",
+        "Numeric",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "bbf51f899c35ae417cf6442b40f329a4c0ee8ffc0d2efbac0b94dc865a7a86cb"
+}

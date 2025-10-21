@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT fee_type, fee_value\n            FROM transaction_fees \n            WHERE transaction_type = $1 AND is_active = true\n            AND min_amount <= $2 AND max_amount >= $2\n            ORDER BY min_amount DESC\n            LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "fee_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "fee_value",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "transaction_type",
+            "kind": {
+              "Enum": [
+                "deposit",
+                "withdrawal",
+                "transfer",
+                "job_payment",
+                "job_refund",
+                "platform_fee",
+                "bonus",
+                "referral",
+                "penalty"
+              ]
+            }
+          }
+        },
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "9980dab48c05e230854f7c8229a669ace74ab60fb5612bf9f293ecf77f4f9454"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT COALESCE(SUM(wh.amount), 0) as total\n            FROM wallet_holds wh \n            JOIN naira_wallets nw ON wh.wallet_id = nw.id\n            WHERE nw.user_id = $1 AND wh.status = 'active'\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "800997151cf1d23047bbe03d1aed973134e6987f2e420a479299f5dbaaa0b275"
+}

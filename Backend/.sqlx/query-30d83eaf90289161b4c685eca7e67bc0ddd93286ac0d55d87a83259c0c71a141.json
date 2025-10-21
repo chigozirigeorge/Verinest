@@ -1,0 +1,81 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO job_contracts \n            (job_id, employer_id, worker_id, agreed_rate, agreed_timeline, terms)\n            VALUES ($1, $2, $3, $4, $5, $6)\n            RETURNING id, job_id, employer_id, worker_id, agreed_rate, agreed_timeline,\n            terms, signed_by_employer, signed_by_worker, contract_date\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "employer_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "worker_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "agreed_rate",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 5,
+        "name": "agreed_timeline",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "terms",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "signed_by_employer",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "signed_by_worker",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "contract_date",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Numeric",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "30d83eaf90289161b4c685eca7e67bc0ddd93286ac0d55d87a83259c0c71a141"
+}

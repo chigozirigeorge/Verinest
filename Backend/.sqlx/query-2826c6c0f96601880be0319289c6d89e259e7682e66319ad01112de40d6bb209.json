@@ -1,0 +1,112 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO naira_wallets (user_id)\n            VALUES ($1)\n            RETURNING \n                id, \n                user_id, \n                balance, \n                available_balance, \n                total_deposits, \n                total_withdrawals, \n                status as \"status: WalletStatus\", \n                daily_limit, \n                monthly_limit, \n                is_verified, \n                bvn_verified, \n                created_at, \n                updated_at, \n                last_activity_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "balance",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "available_balance",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "total_deposits",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "total_withdrawals",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "status: WalletStatus",
+        "type_info": {
+          "Custom": {
+            "name": "wallet_status",
+            "kind": {
+              "Enum": [
+                "active",
+                "suspended",
+                "frozen",
+                "closed"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "daily_limit",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "monthly_limit",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "is_verified",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "bvn_verified",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "last_activity_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "2826c6c0f96601880be0319289c6d89e259e7682e66319ad01112de40d6bb209"
+}

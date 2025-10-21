@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE bank_accounts \n            SET is_verified = true, updated_at = NOW()\n            WHERE id = $1\n            RETURNING \n                id, \n                user_id, \n                account_name, \n                account_number, \n                bank_code, \n                bank_name,\n                is_verified, \n                is_primary, \n                created_at, \n                updated_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "account_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "account_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "bank_code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "bank_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "is_verified",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "is_primary",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "28eeae666312715a7a435dcfd44709721fef5448ad87d43d784a6202a8d8df09"
+}

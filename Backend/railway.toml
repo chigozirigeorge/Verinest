@@ -1,0 +1,9 @@
+[build]
+builder = "railway"
+buildCommand = "chmod +x build.sh && ./build.sh"
+
+[deploy]
+startCommand = "./target/release/verinest"
+
+[build.railway]
+language = "rust"

@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT \n                    u.id as \"id!\",\n                    u.name as \"name!\",\n                    u.username as \"username!\",\n                    u.email as \"email!\",\n                    r.created_at as \"joined_at!\"\n                FROM referrals r\n                JOIN users u ON r.referee_id = u.id\n                WHERE r.referrer_id = $1\n                ORDER BY r.created_at DESC\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "username!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "email!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "joined_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "138158da168477aa9a3a5196d369e687b7da20412dd262f4a98000b0de32cf4b"
+}

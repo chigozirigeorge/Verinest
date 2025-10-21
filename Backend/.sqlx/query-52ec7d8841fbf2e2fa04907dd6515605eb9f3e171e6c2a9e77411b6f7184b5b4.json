@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT COALESCE(SUM(amount), 0) as total\n                FROM wallet_transactions \n                WHERE user_id = $1 AND transaction_type = $2 \n                AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)\n                AND status = 'completed'\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        {
+          "Custom": {
+            "name": "transaction_type",
+            "kind": {
+              "Enum": [
+                "deposit",
+                "withdrawal",
+                "transfer",
+                "job_payment",
+                "job_refund",
+                "platform_fee",
+                "bonus",
+                "referral",
+                "penalty"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "52ec7d8841fbf2e2fa04907dd6515605eb9f3e171e6c2a9e77411b6f7184b5b4"
+}

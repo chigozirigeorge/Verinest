@@ -1,0 +1,203 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO wallet_transactions \n            (wallet_id, user_id, transaction_type, amount, balance_before, balance_after, \n             reference, external_reference, description, metadata, status)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'completed')\n            RETURNING id, wallet_id, user_id, transaction_type as \"transaction_type: TransactionType\",\n                      amount, balance_before, balance_after, status as \"status: TransactionStatus\",\n                      reference, external_reference, payment_method as \"payment_method: PaymentMethod\",\n                      description, metadata, job_id, recipient_wallet_id, fee_amount,\n                      created_at, updated_at, completed_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "wallet_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "transaction_type: TransactionType",
+        "type_info": {
+          "Custom": {
+            "name": "transaction_type",
+            "kind": {
+              "Enum": [
+                "deposit",
+                "withdrawal",
+                "transfer",
+                "job_payment",
+                "job_refund",
+                "platform_fee",
+                "bonus",
+                "referral",
+                "penalty"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "balance_before",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "balance_after",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "status: TransactionStatus",
+        "type_info": {
+          "Custom": {
+            "name": "transaction_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "processing",
+                "completed",
+                "failed",
+                "cancelled",
+                "reversed"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "reference",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "external_reference",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "payment_method: PaymentMethod",
+        "type_info": {
+          "Custom": {
+            "name": "payment_method",
+            "kind": {
+              "Enum": [
+                "bank_transfer",
+                "card",
+                "ussd",
+                "bank_code",
+                "qr",
+                "mobile_money",
+                "bvn",
+                "nip_slip"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 13,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 14,
+        "name": "recipient_wallet_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 15,
+        "name": "fee_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 18,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        {
+          "Custom": {
+            "name": "transaction_type",
+            "kind": {
+              "Enum": [
+                "deposit",
+                "withdrawal",
+                "transfer",
+                "job_payment",
+                "job_refund",
+                "platform_fee",
+                "bonus",
+                "referral",
+                "penalty"
+              ]
+            }
+          }
+        },
+        "Int8",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "62ac3a5d0de775db03abb8134e699b4ec8f4c3fb14a0363f360eb2128f7b4596"
+}

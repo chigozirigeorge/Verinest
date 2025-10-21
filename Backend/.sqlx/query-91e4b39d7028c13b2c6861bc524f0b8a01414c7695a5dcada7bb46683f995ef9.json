@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE job_contracts \n                SET signed_by_worker = true\n                WHERE id = $1\n                RETURNING id, job_id, employer_id, worker_id, agreed_rate, agreed_timeline,\n                terms, signed_by_employer, signed_by_worker, contract_date\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "employer_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "worker_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "agreed_rate",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 5,
+        "name": "agreed_timeline",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "terms",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "signed_by_employer",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "signed_by_worker",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "contract_date",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "91e4b39d7028c13b2c6861bc524f0b8a01414c7695a5dcada7bb46683f995ef9"
+}

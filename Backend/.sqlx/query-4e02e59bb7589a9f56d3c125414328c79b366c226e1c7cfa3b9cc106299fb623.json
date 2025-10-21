@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT daily_limit, monthly_limit, per_transaction_limit\n            FROM wallet_limits \n            WHERE user_tier = $1 AND transaction_type = $2 AND is_active = true\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "daily_limit",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "monthly_limit",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "per_transaction_limit",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        {
+          "Custom": {
+            "name": "transaction_type",
+            "kind": {
+              "Enum": [
+                "deposit",
+                "withdrawal",
+                "transfer",
+                "job_payment",
+                "job_refund",
+                "platform_fee",
+                "bonus",
+                "referral",
+                "penalty"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4e02e59bb7589a9f56d3c125414328c79b366c226e1c7cfa3b9cc106299fb623"
+}

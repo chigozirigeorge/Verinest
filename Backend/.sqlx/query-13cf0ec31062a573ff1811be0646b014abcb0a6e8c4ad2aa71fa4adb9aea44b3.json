@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE naira_wallets \n            SET balance = $2, \n                available_balance = $3,\n                total_deposits = CASE WHEN $4 = 'deposit'::transaction_type THEN total_deposits + $5 ELSE total_deposits END,\n                updated_at = NOW(),\n                last_activity_at = NOW()\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Int8",
+        {
+          "Custom": {
+            "name": "transaction_type",
+            "kind": {
+              "Enum": [
+                "deposit",
+                "withdrawal",
+                "transfer",
+                "job_payment",
+                "job_refund",
+                "platform_fee",
+                "bonus",
+                "referral",
+                "penalty"
+              ]
+            }
+          }
+        },
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "13cf0ec31062a573ff1811be0646b014abcb0a6e8c4ad2aa71fa4adb9aea44b3"
+}

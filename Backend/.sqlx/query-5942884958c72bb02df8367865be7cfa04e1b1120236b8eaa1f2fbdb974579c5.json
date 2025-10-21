@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE user_wallets\n                SET is_verified = true, updated_at = NOW()\n                WHERE user_id = $1 AND wallet_address = $2\n                RETURNING id, user_id, wallet_address, wallet_type, blockchain, is_verified, created_at, updated_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "wallet_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "wallet_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "blockchain",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "is_verified",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "5942884958c72bb02df8367865be7cfa04e1b1120236b8eaa1f2fbdb974579c5"
+}

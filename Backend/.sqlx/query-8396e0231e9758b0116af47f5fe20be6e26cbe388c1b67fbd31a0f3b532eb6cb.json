@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE disputes\n            SET assigned_verifier = $1,\n                status = 'under_review'::dispute_status\n            WHERE id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8396e0231e9758b0116af47f5fe20be6e26cbe388c1b67fbd31a0f3b532eb6cb"
+}
