@@ -1063,7 +1063,6 @@ impl<T> ApiResponse<T> {
 
 
 
-////added here
 pub async fn get_job_applications(
     Extension(app_state): Extension<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -1088,19 +1087,50 @@ pub async fn get_job_applications(
     let mut application_responses = Vec::new();
     
     for app in applications {
-        // Get worker user details (get_user returns Result<Option<User>, _>)
+        // Get worker user details
         let worker_user_result = app_state.db_client
             .get_user(Some(app.worker_id), None, None, None)
             .await;
 
-        let worker_response = match worker_user_result {
+        let worker_user = match worker_user_result {
             Ok(Some(user)) => Some(WorkerUserResponse {
                 id: user.id,
                 name: user.name,
                 email: user.email,
             }),
-            Ok(None) => None,
-            Err(_) => None,
+            Ok(None) => {
+                println!("⚠️ User not found for worker: {}", app.worker_id);
+                None
+            },
+            Err(e) => {
+                println!("⚠️ Error fetching user for worker {}: {}", app.worker_id, e);
+                None
+            },
+        };
+
+        // Get worker profile details
+        let worker_profile_result = app_state.db_client
+            .get_worker_profile(app.worker_id)
+            .await;
+
+        let worker_profile = match worker_profile_result {
+            Ok(profile) => Some(WorkerProfileApplicationResponse {
+                // Convert enum WorkerCategory -> String
+                category: profile.category.to_str().to_string(),
+                experience_years: profile.experience_years,
+                description: profile.description,
+                // hourly_rate and daily_rate are Option<BigDecimal> -> convert safely
+                hourly_rate: profile.hourly_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
+                daily_rate: profile.daily_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
+                location_state: profile.location_state,
+                location_city: profile.location_city,
+                // No explicit skills field on profile; return empty list for now
+                skills: vec![],
+            }),
+            Err(e) => {
+                println!("⚠️ Error fetching profile for worker {}: {}", app.worker_id, e);
+                None
+            },
         };
 
         application_responses.push(JobApplicationResponse {
@@ -1112,7 +1142,8 @@ pub async fn get_job_applications(
             cover_letter: app.cover_letter,
             status: app.status.unwrap_or_default(),
             created_at: app.created_at.unwrap_or_else(Utc::now),
-            worker: worker_response,
+            worker: worker_user,
+            worker_profile: worker_profile,
         });
     }
 
@@ -1122,18 +1153,34 @@ pub async fn get_job_applications(
     )))
 }
 
+// Add these new response structs
+#[derive(Debug, serde::Serialize)]
+pub struct WorkerProfileApplicationResponse {
+    pub category: String,
+    pub experience_years: i32,
+    pub description: String,
+    pub hourly_rate: f64,
+    pub daily_rate: f64,
+    pub location_state: String,
+    pub location_city: String,
+    pub skills: Vec<String>,
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct JobApplicationResponse {
     pub id: Uuid,
     pub job_id: Uuid,
     pub worker_id: Uuid,
-    pub proposed_rate: f64,  // Convert from BigDecimal to f64
+    pub proposed_rate: f64,
     pub estimated_completion: i32,
     pub cover_letter: String,
-    pub status: String,      // Convert from Option<String> to String
-    pub created_at: chrono::DateTime<Utc>,  // Convert from Option<DateTime> to DateTime
-    pub worker: Option<WorkerUserResponse>, // Add worker details
+    pub status: String,
+    pub created_at: chrono::DateTime<Utc>,
+    pub worker: Option<WorkerUserResponse>,
+    pub worker_profile: Option<WorkerProfileApplicationResponse>,
 }
+
+
 
 #[derive(Debug, serde::Serialize)]
 pub struct WorkerUserResponse {
