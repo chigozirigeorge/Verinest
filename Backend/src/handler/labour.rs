@@ -6,11 +6,16 @@ use axum::{
     routing::{delete, get, post, put},
     Extension, Json, Router
 };
+use chrono::Utc;
 use uuid::Uuid;
 use validator::Validate;
+use num_traits::ToPrimitive;
 
 use crate::{
-    db::labourdb::LaborExt::{self}, 
+    db::{
+        labourdb::LaborExt::{self},
+        userdb::UserExt,
+    }, 
     dtos::labordtos::*, error::HttpError, 
     middleware::JWTAuthMiddeware, models::labourmodel::*, 
     service::{
@@ -263,6 +268,9 @@ pub async fn create_job(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+
+    let _ = app_state.notification_service.notify_new_job(&result.clone()).await;
+
     Ok(Json(ApiResponse::success(
         "Job created successfully",
         result,
@@ -400,32 +408,6 @@ pub async fn apply_to_job(
     )))
 }
 
-pub async fn get_job_applications(
-    Extension(app_state): Extension<Arc<AppState>>,
-    Path(job_id): Path<Uuid>,
-    Extension(auth): Extension<JWTAuthMiddeware>,
-) -> Result<impl IntoResponse, HttpError> {
-    // Verify user owns the job
-    let job = app_state.db_client
-        .get_job_by_id(job_id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?
-        .ok_or_else(|| HttpError::not_found("Job not found"))?;
-
-    if job.employer_id != auth.user.id {
-        return Err(HttpError::unauthorized("Not authorized to view applications for this job"));
-    }
-
-    let applications = app_state.db_client
-        .get_job_applications(job_id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
-
-    Ok(Json(ApiResponse::success(
-        "Job applications retrieved successfully",
-        applications,
-    )))
-}
 
 pub async fn assign_worker_to_job(
     Extension(app_state): Extension<Arc<AppState>>,
@@ -510,6 +492,17 @@ pub async fn submit_job_progress(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+    let job = app_state.db_client
+        .get_job_by_id(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+    let _ = app_state.notification_service.notify_progress_update(
+        job.employer_id,
+        &result.progress,
+    ).await;
+
     Ok(Json(ApiResponse::success(
         "Progress submitted successfully",
         result,
@@ -540,6 +533,26 @@ pub async fn complete_job(
         .complete_job(job_id, auth.user.id)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let job = app_state.db_client
+        .get_job_by_id(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+    // Notify worker
+    if let Some(worker_id) = job.assigned_worker_id {
+        let _ = app_state.notification_service.notify_job_completion(
+            worker_id,
+            &job,
+        ).await;
+    }
+
+    // Notify employer
+    let _ = app_state.notification_service.notify_job_completion(
+        job.employer_id,
+        &job,
+    ).await;
 
     Ok(Json(ApiResponse::success(
         "Job completed successfully",
@@ -630,6 +643,14 @@ pub async fn create_dispute(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+     // ADD: Notify both parties about dispute
+    let _ = app_state.notification_service.notify_dispute_creation(
+        auth.user.id,
+        against,
+        &result.dispute,
+    ).await;
+
+
     Ok(Json(ApiResponse::success(
         "Dispute created successfully",
         result,
@@ -650,11 +671,20 @@ pub async fn resolve_dispute(
             dispute_id,
             auth.user.id,
             body.resolution,
-            body.decision,
+            body.decision.clone(),
             body.payment_percentage,
         )
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // ADD: Notify both parties about dispute resolution
+    let _ = app_state.notification_service.notify_dispute_resolution(
+        result.dispute.raised_by,
+        result.dispute.against,
+        &result.dispute,
+        &body.decision,
+    ).await;
+
 
     Ok(Json(ApiResponse::success(
         "Dispute resolved successfully",
@@ -959,6 +989,21 @@ pub async fn release_escrow_payment(
         .release_partial_payment(job_id, body.release_percentage)
         .await?;
 
+    // ADD: Notify worker about payment release
+    let job = app_state.db_client
+        .get_job_by_id(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+    if let Some(worker_id) = job.assigned_worker_id {
+        let _ = app_state.notification_service.notify_payment_release(
+            worker_id,
+            job_id,
+            escrow_release.amount.to_f64().unwrap_or(0.0),
+        ).await;
+    }
+
     Ok(Json(ApiResponse::success(
         "Escrow payment released successfully",
         escrow_release,
@@ -1013,4 +1058,87 @@ impl<T> ApiResponse<T> {
             data,
         }
     }
+}
+
+
+
+
+////added here
+pub async fn get_job_applications(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+    Extension(auth): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    // Verify user owns the job
+    let job = app_state.db_client
+        .get_job_by_id(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+    if job.employer_id != auth.user.id {
+        return Err(HttpError::unauthorized("Not authorized to view applications for this job"));
+    }
+
+    let applications = app_state.db_client
+        .get_job_applications(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let mut application_responses = Vec::new();
+    
+    for app in applications {
+        // Get worker user details (get_user returns Result<Option<User>, _>)
+        let worker_user_result = app_state.db_client
+            .get_user(Some(app.worker_id), None, None, None)
+            .await;
+
+        let worker_response = match worker_user_result {
+            Ok(Some(user)) => Some(WorkerUserResponse {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+            }),
+            Ok(None) => None,
+            Err(_) => None,
+        };
+
+        application_responses.push(JobApplicationResponse {
+            id: app.id,
+            job_id: app.job_id,
+            worker_id: app.worker_id,
+            proposed_rate: app.proposed_rate.to_f64().unwrap_or(0.0),
+            estimated_completion: app.estimated_completion,
+            cover_letter: app.cover_letter,
+            status: app.status.unwrap_or_default(),
+            created_at: app.created_at.unwrap_or_else(Utc::now),
+            worker: worker_response,
+        });
+    }
+
+    Ok(Json(ApiResponse::success(
+        "Job applications retrieved successfully",
+        application_responses,
+    )))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct JobApplicationResponse {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub worker_id: Uuid,
+    pub proposed_rate: f64,  // Convert from BigDecimal to f64
+    pub estimated_completion: i32,
+    pub cover_letter: String,
+    pub status: String,      // Convert from Option<String> to String
+    pub created_at: chrono::DateTime<Utc>,  // Convert from Option<DateTime> to DateTime
+    pub worker: Option<WorkerUserResponse>, // Add worker details
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct WorkerUserResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub email: String,
+    // Add other fields you need
 }

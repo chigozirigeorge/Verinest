@@ -4,6 +4,7 @@ use crate::{
     models::labourmodel::*,
     error::HttpError,
 };
+use axum::http::StatusCode;
 
 #[derive(Error, Debug)]
 pub enum ServiceError {
@@ -58,6 +59,29 @@ impl From<ServiceError> for HttpError {
             ServiceError::InsufficientEscrowFunds { .. } => HttpError::payment_required(error.to_string()),
             
             _ => HttpError::server_error(error.to_string()),
+        }
+    }
+}
+
+impl ServiceError {
+    pub fn status_code(&self) -> StatusCode {
+        match self {
+            ServiceError::WorkerProfileNotFound(_) 
+            | ServiceError::JobNotFound(_) 
+            | ServiceError::DisputeNotFound(_) => StatusCode::NOT_FOUND,
+            
+            ServiceError::InvalidJobStatus(_, _)
+            | ServiceError::InvalidEscrowTransition(_)
+            | ServiceError::InvalidDisputeStatus(_, _)
+            | ServiceError::Validation(_) => StatusCode::BAD_REQUEST,
+            
+            ServiceError::UnauthorizedJobAccess(_, _) => StatusCode::UNAUTHORIZED,
+            
+            ServiceError::InsufficientEscrowFunds { .. } => StatusCode::PAYMENT_REQUIRED,
+            
+            ServiceError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            
+            ServiceError::Notification(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

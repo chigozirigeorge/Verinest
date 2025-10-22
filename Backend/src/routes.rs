@@ -10,15 +10,12 @@ use crate::{
         auth::auth_handler, 
         google_oauth::oauth_handler, 
         labour::{
-            labour_handler,
             search_jobs,
             get_job_details,
             search_workers,
             get_worker_details,
         }, 
         naira_wallet::{
-            naira_wallet_handler, 
-            public_verify_deposit,
             paystack_webhook,
             flutterwave_webhook
         }, 
@@ -122,6 +119,9 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .merge(public_labour_routes)
         .merge(protected_labour_routes);
 
+    let notification_routes = crate::handler::notification_handler::notification_routes()
+    .layer(middleware::from_fn(auth));
+
     // Create verification routes with auth middleware
     let verification_routes = verification_handler()
         .layer(middleware::from_fn(auth));
@@ -137,6 +137,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         )
         .nest("/wallet", wallet_routes)
         .nest("/labour", labour_routes)
+        .nest("/notifications", notification_routes)
         .layer(TraceLayer::new_for_http())
         .layer(Extension(app_state));
 

@@ -7,3 +7,4 @@ pub mod verification;
 pub mod labor;
 pub mod naira_wallet;
 pub mod labour;
+pub mod notification_handler;

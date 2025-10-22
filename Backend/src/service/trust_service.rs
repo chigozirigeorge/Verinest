@@ -2,7 +2,6 @@
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
-use sqlx::Error;
 use serde::Serialize;
 
 use crate::{

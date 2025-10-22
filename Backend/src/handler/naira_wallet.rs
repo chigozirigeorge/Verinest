@@ -173,28 +173,7 @@ pub async fn initiate_deposit(
         .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("Wallet not found"))?;
 
-    // Create transaction record with pending status
-    // let tx_result = sqlx::query!(
-    //     r#"
-    //     INSERT INTO wallet_transactions 
-    //     (wallet_id, user_id, transaction_type, amount, balance_before, balance_after,
-    //      reference, description, status, payment_method)
-    //     VALUES ($1, $2, 'deposit', $3, $4, $4, $5, $6, 'pending', $7)
-    //     RETURNING id
-    //     "#,
-    //     wallet.id,
-    //     auth.user.id,
-    //     amount_kobo,
-    //     wallet.balance,
-    //     reference,
-    //     body.description,
-    //     body.payment_method as PaymentMethod
-    // )
-    // .fetch_one(&app_state.db_client.pool)
-    // .await
-    // .map_err(|e| HttpError::server_error(e.to_string()))?;
-
-    let tx_result = sqlx::query_as::<_, (Uuid,)>(
+    let _tx_result = sqlx::query_as::<_, (Uuid,)>(
         r#"
         INSERT INTO wallet_transactions 
         (wallet_id, user_id, transaction_type, amount, balance_before, balance_after,
@@ -962,7 +941,7 @@ async fn process_paystack_successful_payment(
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     // Credit the wallet
-    let wallet_transaction = app_state.db_client
+    let _wallet_transaction = app_state.db_client
         .credit_wallet(
             transaction.user_id,
             amount_kobo,
