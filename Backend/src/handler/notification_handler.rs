@@ -31,11 +31,11 @@ pub struct MarkReadRequest {
 
 pub fn notification_routes() -> Router {
     Router::new()
-        .route("/notifications", get(get_user_notifications))
-        .route("/notifications/read", post(mark_notification_read))
-        .route("/notifications/read-all", post(mark_all_notifications_read))
-        .route("/notifications/:id/read", post(mark_single_notification_read))
-        .route("/notifications/unread-count", get(get_unread_count))
+    .route("/", get(get_user_notifications))
+    .route("/read", post(mark_notification_read))
+    .route("/read-all", post(mark_all_notifications_read))
+    .route("/:id/read", post(mark_single_notification_read))
+    .route("/unread-count", get(get_unread_count))
 }
 
 // FIXED: Use impl IntoResponse and HttpError

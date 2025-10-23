@@ -131,3 +131,96 @@ pub async fn send_verification_status_email(
 
     send_email(to_email, subject, template_path, &placeholders).await
 }
+
+// Job / Application / Assignment Emails
+pub async fn send_job_application_email(
+    to_email: &str,
+    username: &str,
+    job_title: &str,
+    applicant_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = "New Job Application Received";
+    let template_path = "src/mail/templates/Job-Application.html";
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{job_title}}".to_string(), job_title.to_string()),
+        ("{{applicant_name}}".to_string(), applicant_name.to_string()),
+    ];
+
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
+pub async fn send_job_assignment_email(
+    to_email: &str,
+    username: &str,
+    job_title: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = "You've been assigned a job";
+    let template_path = "src/mail/templates/Job-Assignment.html";
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{job_title}}".to_string(), job_title.to_string()),
+    ];
+
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
+pub async fn send_job_completion_email(
+    to_email: &str,
+    username: &str,
+    job_title: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = "Job Completed";
+    let template_path = "src/mail/templates/Job-Completion.html";
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{job_title}}".to_string(), job_title.to_string()),
+    ];
+
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
+// Transaction Emails
+pub async fn send_payment_released_email(to_email: &str, username: &str, amount: f64) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = "Payment Released";
+    let template_path = "src/mail/templates/Payment-Released.html";
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{amount}}".to_string(), format!("{:.2}", amount)),
+    ];
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
+pub async fn send_deposit_email(to_email: &str, username: &str, amount: f64, reference: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = "Deposit Successful";
+    let template_path = "src/mail/templates/Deposit.html";
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{amount}}".to_string(), format!("{:.2}", amount)),
+        ("{{reference}}".to_string(), reference.to_string()),
+    ];
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
+pub async fn send_withdrawal_email(to_email: &str, username: &str, amount: f64, reference: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = "Withdrawal Processed";
+    let template_path = "src/mail/templates/Withdrawal.html";
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{amount}}".to_string(), format!("{:.2}", amount)),
+        ("{{reference}}".to_string(), reference.to_string()),
+    ];
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
+pub async fn send_transfer_email(to_email: &str, username: &str, amount: f64, reference: &str, direction: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = if direction == "sent" { "Transfer Sent" } else { "Transfer Received" };
+    let template_path = "src/mail/templates/Transfer.html";
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{amount}}".to_string(), format!("{:.2}", amount)),
+        ("{{reference}}".to_string(), reference.to_string()),
+        ("{{direction}}".to_string(), direction.to_string()),
+    ];
+    send_email(to_email, subject, template_path, &placeholders).await
+}

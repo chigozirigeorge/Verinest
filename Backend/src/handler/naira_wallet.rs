@@ -27,6 +27,12 @@ use crate::{
     service::payment_provider::PaymentProviderService,
     AppState,
 };
+use crate::db::verificationdb::VerificationExt;
+use crate::service::error::ServiceError;
+use crate::mail::mails;
+use crate::models::verificationmodels::OtpPurpose;
+use chrono::Utc;
+use rand::Rng;
 
 pub fn naira_wallet_handler() -> Router {
     Router::new()
@@ -381,6 +387,46 @@ pub async fn withdraw_funds(
     // Generate reference
     let reference = generate_transaction_reference();
 
+    // --- SECURITY: verify transaction PIN or email OTP for transfer ---
+    if let Some(pin_str) = &body.transaction_pin {
+        if let Ok(provided_pin) = pin_str.parse::<i16>() {
+            if auth.user.transaction_pin.is_none() || auth.user.transaction_pin.unwrap() != provided_pin {
+                return Err(HttpError::unauthorized("Invalid transaction pin"));
+            }
+        } else {
+            return Err(HttpError::bad_request("Invalid transaction_pin format"));
+        }
+    } else if let Some(otp_code) = &body.email_otp {
+        let otp = app_state
+            .db_client
+            .get_valid_otp(&auth.user.email, otp_code, OtpPurpose::Transaction)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+        if let Some(otp_record) = otp {
+            let _ = app_state
+                .db_client
+                .mark_otp_used(otp_record.id)
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?;
+        } else {
+            return Err(HttpError::unauthorized("Invalid or expired OTP"));
+        }
+    } else {
+        // No auth provided - generate OTP and send email, return 202 Accepted
+    let otp_code = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
+        let expires_at = Utc::now() + chrono::Duration::minutes(10);
+        let _ = app_state
+            .db_client
+            .create_otp(auth.user.id, auth.user.email.clone(), otp_code.clone(), OtpPurpose::Transaction, expires_at)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+        let _ = mails::send_otp_email(&auth.user.email, &otp_code, &OtpPurpose::Transaction).await;
+
+        let resp = (StatusCode::ACCEPTED, Json(WalletApiResponse::<()>::error("OTP sent to your email; confirm with email_otp or use transaction_pin"))).into_response();
+        return Ok(resp);
+    }
+
     // Initiate transfer with payment provider
     let payment_service = PaymentProviderService::new(&app_state.env);
     let transfer_result = payment_service
@@ -426,10 +472,11 @@ pub async fn withdraw_funds(
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     let response: TransactionResponseDto = transaction.into();
-    Ok(Json(WalletApiResponse::success(
+    let resp = (StatusCode::OK, Json(WalletApiResponse::<TransactionResponseDto>::success(
         "Withdrawal initiated successfully",
         response,
-    )))
+    ))).into_response();
+    Ok(resp)
 }
 
 // Transfer Handler
