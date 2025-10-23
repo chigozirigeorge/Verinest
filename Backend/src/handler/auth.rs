@@ -120,7 +120,9 @@ pub async fn register(
         );
     }
 
+    
     // Send verification email
+    tracing::info!("sending a verification email");
     send_verification_email(&user.email, &user.username,&verification_token)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;

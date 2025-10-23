@@ -69,6 +69,12 @@ pub trait UserExt {
         password: String,
     ) -> Result<User, sqlx::Error>;
 
+    async fn update_transaction_pin(
+        &self,
+        user_id: Uuid,
+        transaction_pin: i16,
+    ) -> Result<User, sqlx::Error>;
+
     async fn verifed_token(
         &self,
         token: &str,
@@ -616,6 +622,34 @@ impl UserExt for DBClient {
             "#
         )
         .bind(new_password)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    async fn update_transaction_pin(
+        &self,
+        user_id: Uuid,
+        transaction_pin: i16,
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            r#"
+            UPDATE users
+            SET transaction_pin = $1, updated_at = NOW()
+            WHERE id = $2
+            RETURNING id, name, username, email, password,
+                role as "role: UserRole", trust_score, verified,
+                verification_type as "verification_type: VerificationType",
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, verification_status as "verification_status: VerificationStatus",
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                verification_token, token_expires_at,
+                created_at as "created_at!: DateTime<Utc>", 
+                updated_at as "updated_at!: DateTime<Utc>"
+            "#,
+        )
+        .bind(transaction_pin)
         .bind(user_id)
         .fetch_one(&self.pool)
         .await
