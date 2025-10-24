@@ -152,6 +152,13 @@ pub trait UserExt {
         trust_points: i32,
     ) -> Result<User, sqlx::Error>;
 
+    async fn link_google_account(
+        &self,
+        user_id: Uuid,
+        google_id: &str,
+        avatar_url: Option<&str>,
+    ) -> Result<User, sqlx::Error>;
+
     //wallets methods
     async fn update_user_wallet(
         &self,
@@ -1017,6 +1024,29 @@ impl UserExt for DBClient {
         .fetch_one(&self.pool)
         .await
     }
+
+    async fn link_google_account(
+        &self,
+        user_id: Uuid,
+        google_id: &str,
+        avatar_url: Option<&str>,
+    ) -> Result<User, sqlx::Error> {
+    let user = sqlx::query_as::<_, User>(
+        r#"
+        UPDATE users 
+        SET google_id = $1, avatar_url = $2, verified = true, updated_at = NOW()
+        WHERE id = $3
+        RETURNING *
+        "#
+    )
+    .bind(google_id)
+    .bind(avatar_url)
+    .bind(user_id)
+    .fetch_one(&self.pool)
+    .await?;
+
+    Ok(user)
+}
 
     async fn update_user_wallet(
         &self,
