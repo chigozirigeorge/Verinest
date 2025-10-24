@@ -225,6 +225,7 @@ pub fn oauth_handler() -> Router {
         .route("/test-url", get(test_url_generation))
 }
 
+// In your Rust backend - Update the google_login function
 pub async fn google_login(
     Extension(_app_state): Extension<Arc<AppState>>,
     jar: CookieJar,
@@ -248,15 +249,14 @@ pub async fn google_login(
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
         .build();
 
-    let auth_url = google_oauth.get_authorization_url(&redirect_url, &state_secret);
+    // Force account selection by adding prompt=select_account
+    let mut auth_url = google_oauth.get_authorization_url(&redirect_url, &state_secret);
+    auth_url.push_str("&prompt=select_account");
+    
     println!("🌐 Generated auth URL: {}", auth_url);
 
-    println!("🔄 Testing redirect creation...");
-    let redirect = Redirect::to(&auth_url);
-    println!("✅ Redirect object created successfully");
-    
     println!("=== REDIRECTING TO GOOGLE ===");
-    Ok((jar.add(cookie), redirect))
+    Ok((jar.add(cookie), Redirect::to(&auth_url)))
 }
 
 pub async fn google_callback(
