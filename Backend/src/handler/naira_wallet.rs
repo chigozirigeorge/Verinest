@@ -28,7 +28,6 @@ use crate::{
     AppState,
 };
 use crate::db::verificationdb::VerificationExt;
-use crate::service::error::ServiceError;
 use crate::mail::mails;
 use crate::models::verificationmodels::OtpPurpose;
 use chrono::Utc;
@@ -414,7 +413,7 @@ pub async fn withdraw_funds(
         }
     } else {
         // No auth provided - generate OTP and send email, return 202 Accepted
-    let otp_code = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
+    let otp_code = format!("{:06}", rand::rng().random_range(0..1_000_000));
         let expires_at = Utc::now() + chrono::Duration::minutes(10);
         let _ = app_state
             .db_client

@@ -224,3 +224,119 @@ pub async fn send_transfer_email(to_email: &str, username: &str, amount: f64, re
     ];
     send_email(to_email, subject, template_path, &placeholders).await
 }
+
+// In mails.rs - Add progress update email function
+
+pub async fn send_progress_update_email(
+    to_email: &str,
+    username: &str,
+    job_title: &str,
+    progress_percentage: i32,
+    progress_description: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = format!("Progress Update: {}", job_title);
+    let template_path = "src/mail/templates/Progress-Update.html";
+    
+    let app_url = std::env::var("APP_URL")
+        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+    let dashboard_url = format!("{}/dashboard", app_url);
+    
+    let update_date = chrono::Utc::now().format("%B %d, %Y at %I:%M %p").to_string();
+    
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{job_title}}".to_string(), job_title.to_string()),
+        ("{{progress_percentage}}".to_string(), progress_percentage.to_string()),
+        ("{{progress_description}}".to_string(), progress_description.to_string()),
+        ("{{update_date}}".to_string(), update_date),
+        ("{{dashboard_url}}".to_string(), dashboard_url),
+    ];
+
+    send_email(to_email, &subject, template_path, &placeholders).await
+}
+
+pub async fn send_dispute_notification_email(
+    to_email: &str,
+    username: &str,
+    dispute_reason: &str,
+    job_title: &str,
+    is_raised_by: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = if is_raised_by {
+        "Dispute Created - Under Review"
+    } else {
+        "Dispute Raised Against You"
+    };
+    
+    let template_path = "src/mail/templates/Dispute-Notification.html";
+    
+    let app_url = std::env::var("APP_URL")
+        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+    let disputes_url = format!("{}/disputes", app_url);
+    
+    let message = if is_raised_by {
+        format!("Your dispute has been created and is being reviewed by our team. We will notify you once a resolution has been reached.")
+    } else {
+        format!("A dispute has been raised against you regarding the job: {}. Please review the details and provide your response.", job_title)
+    };
+    
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{dispute_reason}}".to_string(), dispute_reason.to_string()),
+        ("{{job_title}}".to_string(), job_title.to_string()),
+        ("{{message}}".to_string(), message),
+        ("{{disputes_url}}".to_string(), disputes_url),
+    ];
+
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
+pub async fn send_contract_proposal_email(
+    to_email: &str,
+    username: &str,
+    proposer_name: &str,
+    job_title: &str,
+    agreed_rate: f64,
+    agreed_timeline: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = format!("Contract Proposal: {}", job_title);
+    let template_path = "src/mail/templates/Contract-Proposal.html";
+    
+    let app_url = std::env::var("APP_URL")
+        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+    let chat_url = format!("{}/chat", app_url);
+    
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{proposer_name}}".to_string(), proposer_name.to_string()),
+        ("{{job_title}}".to_string(), job_title.to_string()),
+        ("{{agreed_rate}}".to_string(), format!("₦{:.2}", agreed_rate)),
+        ("{{agreed_timeline}}".to_string(), format!("{} days", agreed_timeline)),
+        ("{{chat_url}}".to_string(), chat_url),
+    ];
+
+    send_email(to_email, &subject, template_path, &placeholders).await
+}
+
+pub async fn send_new_message_notification_email(
+    to_email: &str,
+    username: &str,
+    sender_name: &str,
+    message_preview: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = format!("New message from {}", sender_name);
+    let template_path = "src/mail/templates/New-Message.html";
+    
+    let app_url = std::env::var("APP_URL")
+        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+    let chat_url = format!("{}/chat", app_url);
+    
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{sender_name}}".to_string(), sender_name.to_string()),
+        ("{{message_preview}}".to_string(), message_preview.to_string()),
+        ("{{chat_url}}".to_string(), chat_url),
+    ];
+
+    send_email(to_email, &subject, template_path, &placeholders).await
+}

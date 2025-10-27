@@ -128,7 +128,7 @@ impl EscrowService {
         partial_payment_allowed: bool,
         partial_payment_percentage: Option<i32>,
     ) -> Result<EscrowTransaction, ServiceError> {
-        let mut tx = self.db_client.pool.begin().await?;
+        let tx = self.db_client.pool.begin().await?;
 
         // Create escrow transaction
         let escrow = self.db_client.create_escrow_transaction(
@@ -160,7 +160,7 @@ impl EscrowService {
     pub async fn assign_worker_to_escrow(
         &self,
         job_id: Uuid,
-        worker_id: Uuid,
+        _worker_id: Uuid,
     ) -> Result<EscrowTransaction, ServiceError> {
         // In a real implementation, this would update the escrow with worker info
         // For now, we'll just return the existing escrow
@@ -177,7 +177,7 @@ impl EscrowService {
         job_id: Uuid,
         release_percentage: f64,
     ) -> Result<EscrowTransaction, ServiceError> {
-        let mut tx = self.db_client.pool.begin().await?;
+        let tx = self.db_client.pool.begin().await?;
 
         let escrow = self.db_client
             .get_escrow_by_job_id(job_id)
@@ -212,7 +212,7 @@ impl EscrowService {
         &self,
         job_id: Uuid,
     ) -> Result<EscrowTransaction, ServiceError> {
-        let mut tx = self.db_client.pool.begin().await?;
+        let tx: sqlx::Transaction<'static, sqlx::Postgres> = self.db_client.pool.begin().await?;
 
         let escrow = self.db_client
             .get_escrow_by_job_id(job_id)
@@ -245,7 +245,7 @@ impl EscrowService {
         escrow_id: Uuid,
         dispute_id: Uuid,
     ) -> Result<EscrowTransaction, ServiceError> {
-        let mut tx = self.db_client.pool.begin().await?;
+        let tx = self.db_client.pool.begin().await?;
 
         let mut machines = self.state_machines.write().await;
         if let Some(state_machine) = machines.get_mut(&escrow_id) {
@@ -271,7 +271,7 @@ impl EscrowService {
         escrow_id: Uuid,
         resolution: DisputeResolution,
     ) -> Result<EscrowTransaction, ServiceError> {
-        let mut tx = self.db_client.pool.begin().await?;
+        let tx = self.db_client.pool.begin().await?;
 
         let mut machines = self.state_machines.write().await;
         if let Some(state_machine) = machines.get_mut(&escrow_id) {

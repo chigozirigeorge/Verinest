@@ -40,6 +40,9 @@ pub enum ServiceError {
     
     #[error("Notification error: {0}")]
     Notification(String),
+
+    #[error("Other error: {0}")]
+    Other(String),
 }
 
 impl From<ServiceError> for HttpError {
@@ -63,6 +66,12 @@ impl From<ServiceError> for HttpError {
     }
 }
 
+impl From<Box<dyn std::error::Error>> for ServiceError {
+    fn from(err: Box<dyn std::error::Error>) -> Self {
+        ServiceError::Other(err.to_string())
+    }
+}
+
 impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
@@ -82,6 +91,8 @@ impl ServiceError {
             ServiceError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             
             ServiceError::Notification(_) => StatusCode::INTERNAL_SERVER_ERROR,
+
+            ServiceError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

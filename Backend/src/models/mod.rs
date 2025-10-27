@@ -4,3 +4,5 @@ pub mod referralmodel;
 pub mod walletmodels;
 pub mod verificationmodels;
 pub mod labourmodel;
+pub mod chatnodels;
+pub mod supportmodel;

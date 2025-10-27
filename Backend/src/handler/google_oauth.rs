@@ -259,105 +259,6 @@ pub async fn google_login(
     Ok((jar.add(cookie), Redirect::to(&auth_url)))
 }
 
-// pub async fn google_callback(
-//     Extension(app_state): Extension<Arc<AppState>>,
-//     jar: CookieJar,
-//     Query(query): Query<GoogleAuthQuery>,
-// ) -> Result<impl IntoResponse, HttpError> {
-//     println!("=== GOOGLE CALLBACK STARTED ===");
-//     let google_auth = GoogleAuthService::new()
-//         .map_err(|e| HttpError::server_error(e.to_string()))?;
-
-//     // Get state from cookie
-//     let stored_state = jar.get("oauth_state")
-//         .map(|cookie| cookie.value().to_string())
-//         .ok_or_else(|| HttpError::unauthorized("Missing CSRF state cookie".to_string()))?;
-
-//     // Validate CSRF state
-//     if let Some(state) = &query.state {
-//         if state != &stored_state {
-//             return Err(HttpError::unauthorized("Invalid CSRF token".to_string()));
-//         }
-//     } else {
-//         return Err(HttpError::unauthorized("Missing CSRF state parameter".to_string()));
-//     }
-
-//     // Remove the cookie after use
-//     let jar = jar.remove(Cookie::build("oauth_state"));
-
-//     let redirect_url = "https://verinest.up.railway.app/api/oauth/google/callback".to_string();
-
-//     // Exchange code for access token
-//     println!("🔄 Exchanging code for tokens...");
-//     let (access_token, id_token) = google_auth.exchange_code(&query.code, &redirect_url)
-//         .await
-//         .map_err(|e| HttpError::unauthorized(e.to_string()))?;
-
-//     // Get user info from Google
-//     let user_info = if let Some(id_token) = id_token {
-//         google_auth.validate_id_token(&id_token)
-//             .await
-//             .map_err(|e| HttpError::unauthorized(e.to_string()))?
-//     } else {
-//         google_auth.get_user_info_via_access_token(&access_token)
-//             .await
-//             .map_err(|e| HttpError::unauthorized(e.to_string()))?
-//     };
-
-//     // Check if user already exists by Google ID (for login)
-//     let existing_user_by_google = app_state.db_client
-//         .get_user_by_google_id(&user_info.sub)
-//         .await
-//         .map_err(|e| HttpError::server_error(e.to_string()))?;
-
-//     let user = if let Some(user) = existing_user_by_google {
-//         // User exists - LOGIN FLOW
-//         println!("✅ Existing user found - logging in: {}", user.email);
-//         user
-//     } else {
-//         // Check if user exists by email (for account linking or duplicate prevention)
-//         let existing_user_by_email = app_state.db_client
-//             .get_user(None, None, Some(&user_info.email), None)
-//             .await
-//             .map_err(|e| HttpError::server_error(e.to_string()))?;
-
-//         if let Some(user) = existing_user_by_email {
-//             // User exists with this email but not linked to Google - link the accounts
-//             println!("🔗 Linking existing email account to Google: {}", user.email);
-            
-//             // Update the existing user with Google ID and set verified to true
-//             app_state.db_client
-//                 .link_google_account(user.id, &user_info.sub, user_info.picture.as_deref())
-//                 .await
-//                 .map_err(|e| HttpError::server_error(e.to_string()))?
-//         } else {
-//             // Create new user - REGISTRATION FLOW with verified = true
-//             println!("🆕 Creating new verified user via Google OAuth: {}", user_info.email);
-//             app_state.db_client.create_oauth_user(
-//                 user_info.name,
-//                 user_info.email,
-//                 user_info.sub, 
-//                 user_info.picture, 
-//                 100
-//             )
-//             .await
-//             .map_err(|e| HttpError::server_error(e.to_string()))?
-//         }
-//     };
-
-//     // Generate JWT token for both login and registration
-//     let token = token::create_token(
-//         &user.id.to_string(), 
-//         app_state.env.jwt_secret.as_bytes(), 
-//         app_state.env.jwt_maxage
-//     )
-//     .map_err(|e| HttpError::server_error(e.to_string()))?;
-
-//     // Redirect to Frontend with token
-//     let redirect_url = format!("{}?token={}", &app_state.env.app_url, token);
-
-//     Ok((jar, Redirect::to(&redirect_url)))
-// }
 
 pub async fn google_callback(
     Extension(app_state): Extension<Arc<AppState>>,
@@ -411,7 +312,7 @@ pub async fn google_callback(
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     let user = if let Some(user) = existing_user_by_google {
-        println!("✅ Existing user found - logging in: {}", user.email);
+        println!("Existing user found - logging in: {}", user.email);
         user
     } else {
         // Check if user exists by email
@@ -427,7 +328,7 @@ pub async fn google_callback(
                 .await
                 .map_err(|e| HttpError::server_error(e.to_string()))?
         } else {
-            println!("🆕 Creating new verified user via Google OAuth: {}", user_info.email);
+            println!("Creating new verified user via Google OAuth: {}", user_info.email);
             app_state.db_client.create_oauth_user(
                 user_info.name,
                 user_info.email,
@@ -451,7 +352,6 @@ pub async fn google_callback(
     // FIX: Redirect to the correct frontend callback route
     let redirect_url = format!("{}/auth/callback?token={}", &app_state.env.app_url, token);
 
-    println!("✅ Redirecting to frontend callback: {}", redirect_url);
     Ok((jar, Redirect::to(&redirect_url)))
 }
 
@@ -479,7 +379,7 @@ pub async fn test_url_generation() -> Result<impl IntoResponse, HttpError> {
     println!("   Simple format works: {}", test_url);
 
     println!("🧪 Testing urlencoding...");
-    let encoded = urlencoding::encode("https://verinest.vercel.app/callback");
+    let encoded = urlencoding::encode("https://verinestorg.vercel.app/callback");
     println!("   URL encoding works: {}", encoded);
 
     println!("🧪 Testing get_authorization_url method...");

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Progress Update</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+            border-radius: 10px 10px 0 0;
+        }
+        .content {
+            background: #f9f9f9;
+            padding: 30px;
+            border-radius: 0 0 10px 10px;
+        }
+        .progress-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            transition: width 0.3s ease;
+        }
+        .button {
+            display: inline-block;
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Job Progress Update</h1>
+    </div>
+    <div class="content">
+        <p>Hello {{username}},</p>
+        
+        <p>Your worker has submitted a progress update for the job: <strong>{{job_title}}</strong></p>
+        
+        <div class="progress-container">
+            <h3>Current Progress</h3>
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: {{progress_percentage}}%">
+                    {{progress_percentage}}%
+                </div>
+            </div>
+            
+            <h4>Update Details:</h4>
+            <p>{{progress_description}}</p>
+            
+            <p><strong>Updated on:</strong> {{update_date}}</p>
+        </div>
+        
+        <p>You can review the progress update and any attached images in your dashboard.</p>
+        
+        <center>
+            <a href="{{dashboard_url}}" class="button">View Progress</a>
+        </center>
+        
+        <p>If you have any questions or concerns about the progress, you can message the worker directly through the platform.</p>
+        
+        <p>Best regards,<br>The Verinest Team</p>
+    </div>
+    <div class="footer">
+        <p>© 2025 Verinest. All rights reserved.</p>
+        <p>This is an automated message. Please do not reply to this email.</p>
+    </div>
+</body>
+</html>

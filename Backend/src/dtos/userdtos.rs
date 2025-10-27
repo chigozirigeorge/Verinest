@@ -384,3 +384,14 @@ impl AdminUserDto {
         }
     }
 }
+
+#[derive(Debug, Deserialize)]
+pub struct CheckUsernameQuery {
+    pub username: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UsernameCheckResponse {
+    pub available: bool,
+    pub message: String,
+}
