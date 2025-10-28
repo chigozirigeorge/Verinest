@@ -57,7 +57,8 @@ pub fn labour_handler() -> Router {
         
         // Search and discovery routes
         .route("/workers/search", get(search_workers))
-        .route("/workers/:worker_id", get(get_worker_details))
+        // .route("/workers/:worker_id", get(get_worker_details))
+        .route("/workers/:worker_identifier", get(get_worker_details_smart))
         
         // Dashboard routes
         .route("/worker/dashboard", get(get_worker_dashboard))
@@ -868,6 +869,65 @@ pub async fn get_worker_details(
 
     let worker_user = app_state.db_client
         .get_user(Some(worker_id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Worker user not found"))?;
+
+    let response = WorkerProfileResponse {
+        user: worker_user,
+        profile: worker_profile,
+        portfolio,
+        reviews,
+    };
+
+    Ok(Json(ApiResponse::success(
+        "Worker details retrieved successfully",
+        response,
+    )))
+}
+
+// In labour.rs - Smart endpoint that tries both user_id and profile_id
+pub async fn get_worker_details_smart(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Path(worker_identifier): Path<Uuid>,
+) -> Result<impl IntoResponse, HttpError> {
+    println!("🔍 [get_worker_details_smart] Smart lookup for: {}", worker_identifier);
+    
+    let worker_profile;
+    
+    // First try: Assume it's a user_id and look up worker profile
+    match app_state.db_client.get_worker_profile(worker_identifier).await {
+        Ok(profile) => {
+            println!("✅ [get_worker_details_smart] Found by user_id");
+            worker_profile = profile;
+        },
+        Err(_) => {
+            // Second try: Assume it's a profile_id and look up worker profile by ID
+            println!("🔄 [get_worker_details_smart] Trying as profile_id...");
+            worker_profile = app_state.db_client
+                .get_worker_profile_by_id(worker_identifier)
+                .await
+                .map_err(|e| {
+                    println!("❌ [get_worker_details_smart] Not found as user_id or profile_id: {}", e);
+                    HttpError::not_found("Worker not found")
+                })?;
+            println!("✅ [get_worker_details_smart] Found by profile_id");
+        }
+    }
+
+    // Rest of the handler remains the same...
+    let portfolio = app_state.db_client
+        .get_worker_portfolio(worker_profile.user_id)
+        .await
+        .unwrap_or_default();
+
+    let reviews = app_state.db_client
+        .get_worker_reviews(worker_profile.user_id)
+        .await
+        .unwrap_or_default();
+
+    let worker_user = app_state.db_client
+        .get_user(Some(worker_profile.user_id), None, None, None)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("Worker user not found"))?;

@@ -27,6 +27,11 @@ pub trait LaborExt {
         user_id: Uuid
     ) -> Result<WorkerProfile, Error>;
 
+    async fn get_worker_profile_by_id(
+    &self,
+    profile_id: Uuid
+) -> Result<WorkerProfile, Error>;
+
     async fn update_worker_availability(
         &self,
         worker_id: Uuid,
@@ -377,6 +382,31 @@ impl LaborExt for DBClient {
         // Convert Option to Result
         profile.ok_or_else(|| sqlx::Error::RowNotFound)
     }
+
+    async fn get_worker_profile_by_id(
+    &self,
+    profile_id: Uuid
+) -> Result<WorkerProfile, Error> {
+    let profile = sqlx::query_as::<_, WorkerProfile>(
+        r#"
+        SELECT 
+            id, user_id, 
+            category, 
+            experience_years, description, 
+            hourly_rate, daily_rate, 
+            location_state, location_city, 
+            is_available, rating, completed_jobs, 
+            created_at, updated_at
+        FROM worker_profiles
+        WHERE id = $1
+        "#
+    )
+    .bind(profile_id)
+    .fetch_optional(&self.pool)
+    .await?;
+    
+    profile.ok_or_else(|| sqlx::Error::RowNotFound)
+}
 
     async fn update_worker_availability(
         &self,
