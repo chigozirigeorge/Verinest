@@ -409,36 +409,101 @@ pub async fn apply_to_job(
 }
 
 
+// pub async fn assign_worker_to_job(
+//     Extension(app_state): Extension<Arc<AppState>>,
+//     Path(job_id): Path<Uuid>,
+//     Extension(auth): Extension<JWTAuthMiddeware>,
+//     Json(body): Json<serde_json::Value>,
+// ) -> Result<impl IntoResponse, HttpError> {
+//     let worker_id: Uuid = body["worker_id"]
+//         .as_str()
+//         .and_then(|s| Uuid::parse_str(s).ok())
+//         .ok_or_else(|| HttpError::bad_request("Invalid worker_id"))?;
+
+//     let result = app_state.labour_service
+//         .assign_worker_to_job(job_id, auth.user.id, worker_id)
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+//     let job = app_state.db_client
+//         .get_job_by_id(job_id)
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?
+//         .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+//     let _ = app_state.notification_service.notify_job_assigned_to_worker(worker_id, &job)
+//         .await;
+
+//     Ok(Json(ApiResponse::success(
+//         "Worker assigned successfully",
+//         result,
+//     )))
+// }
+
 pub async fn assign_worker_to_job(
     Extension(app_state): Extension<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
     Extension(auth): Extension<JWTAuthMiddeware>,
-    Json(body): Json<serde_json::Value>,
+    Json(body): Json<AssignWorkerDto>, // Create this DTO
 ) -> Result<impl IntoResponse, HttpError> {
-    let worker_id: Uuid = body["worker_id"]
-        .as_str()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| HttpError::bad_request("Invalid worker_id"))?;
+    let worker_id = body.worker_id;
 
-    let result = app_state.labour_service
-        .assign_worker_to_job(job_id, auth.user.id, worker_id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
-
+    // Verify job exists and user owns it
     let job = app_state.db_client
         .get_job_by_id(job_id)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("Job not found"))?;
 
-    let _ = app_state.notification_service.notify_job_assigned_to_worker(worker_id, &job)
-        .await;
+    if job.employer_id != auth.user.id {
+        return Err(HttpError::unauthorized("Not authorized to assign workers to this job"));
+    }
+
+    // Verify worker exists and has applied to this job
+    let applications = app_state.db_client
+        .get_job_applications(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let worker_application = applications.iter()
+        .find(|app| app.worker_id == worker_id)
+        .ok_or_else(|| HttpError::bad_request("Worker has not applied to this job"))?;
+
+    // Assign worker and create escrow
+    let result = app_state.labour_service
+        .assign_worker_to_job(job_id, auth.user.id, worker_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Create contract automatically
+    let contract = app_state.db_client
+        .create_job_contract(
+            job_id,
+            auth.user.id,
+            worker_id,
+            worker_application.proposed_rate.to_f64().unwrap_or(0.0),
+            worker_application.estimated_completion,
+            format!("Standard contract for job: {}. Agreed rate: {}, Timeline: {} days", 
+                   job.title, 
+                   worker_application.proposed_rate.to_f64().unwrap_or(0.0),
+                   worker_application.estimated_completion),
+        )
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Notify worker
+    let _ = app_state.notification_service.notify_job_assigned_to_worker(worker_id, &job).await;
 
     Ok(Json(ApiResponse::success(
-        "Worker assigned successfully",
-        result,
+        "Worker assigned successfully and contract created",
+        AssignWorkerResponse {
+            job: result.job,
+            escrow: result.escrow,
+            contract,
+        },
     )))
 }
+
 
 pub async fn create_job_contract(
     Extension(app_state): Extension<Arc<AppState>>,
@@ -1097,6 +1162,10 @@ pub async fn get_job_applications(
                 id: user.id,
                 name: user.name,
                 email: user.email,
+                username: user.username,
+                avatar_url: user.avatar_url,
+                trust_score: user.trust_score,
+                verified: user.verified,
             }),
             Ok(None) => {
                 println!("⚠️ User not found for worker: {}", app.worker_id);
@@ -1116,15 +1185,17 @@ pub async fn get_job_applications(
         let worker_profile = match worker_profile_result {
             Ok(profile) => Some(WorkerProfileApplicationResponse {
                 // Convert enum WorkerCategory -> String
+                profile_id: profile.id, 
                 category: profile.category.to_str().to_string(),
                 experience_years: profile.experience_years,
                 description: profile.description,
-                // hourly_rate and daily_rate are Option<BigDecimal> -> convert safely
                 hourly_rate: profile.hourly_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
                 daily_rate: profile.daily_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
                 location_state: profile.location_state,
                 location_city: profile.location_city,
-                // No explicit skills field on profile; return empty list for now
+                is_available: profile.is_available.unwrap_or(false),
+                rating: profile.rating.unwrap_or(0.0),
+                completed_jobs: profile.completed_jobs.unwrap_or(0),
                 skills: vec![],
             }),
             Err(e) => {
@@ -1132,6 +1203,22 @@ pub async fn get_job_applications(
                 None
             },
         };
+
+        // Get worker portfolio for the profile
+        let worker_portfolio = if let Some(profile) = &worker_profile {
+            app_state.db_client
+                .get_worker_portfolio(profile.profile_id)
+                .await
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        // Get worker reviews
+        let worker_reviews = app_state.db_client
+            .get_worker_reviews(app.worker_id)
+            .await
+            .unwrap_or_default();
 
         application_responses.push(JobApplicationResponse {
             id: app.id,
@@ -1144,6 +1231,8 @@ pub async fn get_job_applications(
             created_at: app.created_at.unwrap_or_else(Utc::now),
             worker: worker_user,
             worker_profile: worker_profile,
+            worker_portfolio: worker_portfolio,
+            worker_reviews: worker_reviews,
         });
     }
 
@@ -1151,41 +1240,4 @@ pub async fn get_job_applications(
         "Job applications retrieved successfully",
         application_responses,
     )))
-}
-
-// Add these new response structs
-#[derive(Debug, serde::Serialize)]
-pub struct WorkerProfileApplicationResponse {
-    pub category: String,
-    pub experience_years: i32,
-    pub description: String,
-    pub hourly_rate: f64,
-    pub daily_rate: f64,
-    pub location_state: String,
-    pub location_city: String,
-    pub skills: Vec<String>,
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct JobApplicationResponse {
-    pub id: Uuid,
-    pub job_id: Uuid,
-    pub worker_id: Uuid,
-    pub proposed_rate: f64,
-    pub estimated_completion: i32,
-    pub cover_letter: String,
-    pub status: String,
-    pub created_at: chrono::DateTime<Utc>,
-    pub worker: Option<WorkerUserResponse>,
-    pub worker_profile: Option<WorkerProfileApplicationResponse>,
-}
-
-
-
-#[derive(Debug, serde::Serialize)]
-pub struct WorkerUserResponse {
-    pub id: Uuid,
-    pub name: String,
-    pub email: String,
-    // Add other fields you need
 }

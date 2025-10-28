@@ -167,15 +167,30 @@ pub struct CreateJobApplicationDto {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct JobApplicationResponseDto {
+pub struct JobApplicationResponse {
     pub id: Uuid,
-    pub job: JobSummaryDto,
-    pub worker: WorkerInfoDto,
+    pub job_id: Uuid,
+    pub worker_id: Uuid,
     pub proposed_rate: f64,
     pub estimated_completion: i32,
     pub cover_letter: String,
     pub status: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: chrono::DateTime<Utc>,
+    pub worker: Option<WorkerUserResponse>,
+    pub worker_profile: Option<WorkerProfileApplicationResponse>,
+    pub worker_portfolio: Vec<WorkerPortfolio>,
+    pub worker_reviews: Vec<JobReview>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WorkerUserResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub email: String,
+    pub username: String,
+    pub avatar_url: Option<String>,
+    pub trust_score: i32,
+    pub verified: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -333,12 +348,25 @@ pub struct EscrowTransactionDto {
     pub released_at: Option<DateTime<Utc>>,
 }
 
+// Add these DTOs
+#[derive(Debug, Deserialize)]
+pub struct AssignWorkerDto {
+    pub worker_id: Uuid,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AssignWorkerResponse {
+    pub job: Job,
+    pub escrow: EscrowTransaction,
+    pub contract: JobContract,
+}
+
 //Dashboard DTOs
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkerDashBoardDto {
     pub profile: WorkerProfileResponseDto,
     pub active_jobs: Vec<JobResponseDto>,
-    pub job_applications: Vec<JobApplicationResponseDto>,
+    pub job_applications: Vec<JobApplicationResponse>,
     pub completed_jobs_count: i32,
     pub total_earnings: f64,
     pub average_rating: f32,
@@ -501,4 +529,20 @@ pub struct EmployerDashboard {
     pub posted_jobs: Vec<Job>,
     pub active_contracts: Vec<JobContract>,
     pub pending_applications: Vec<JobApplication>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WorkerProfileApplicationResponse {
+    pub profile_id: Uuid, // Add this field
+    pub category: String,
+    pub experience_years: i32,
+    pub description: String,
+    pub hourly_rate: f64,
+    pub daily_rate: f64,
+    pub location_state: String,
+    pub location_city: String,
+    pub is_available: bool,
+    pub rating: f32,
+    pub completed_jobs: i32,
+    pub skills: Vec<String>,
 }
