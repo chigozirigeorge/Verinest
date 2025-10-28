@@ -17,7 +17,7 @@ use crate::{
         userdb::UserExt,
     }, 
     dtos::labordtos::*, error::HttpError, 
-    middleware::JWTAuthMiddeware, models::labourmodel::*, 
+    middleware::JWTAuthMiddeware, models::{labourmodel::*, usermodel::User}, 
     service::{
         dispute_service::DisputeService, 
         error::ServiceError, labour_service::LabourService, 
@@ -800,24 +800,39 @@ pub async fn search_workers(
 
     // Convert to response objects with additional data
     let worker_responses = futures::future::join_all(
-    workers.into_iter().map(|worker| async {
-        // Get portfolio and reviews for each worker
-        let portfolio = app_state.db_client
-            .get_worker_portfolio(worker.user_id)
-            .await
-            .unwrap_or_default();
-        let reviews = app_state.db_client
-            .get_worker_reviews(worker.user_id)
-            .await
-            .unwrap_or_default();
+        workers.into_iter().map(|worker| async {
+            // Get portfolio and reviews for each worker
+            let portfolio = app_state.db_client
+                .get_worker_portfolio(worker.user_id)
+                .await
+                .unwrap_or_default();
+            let reviews = app_state.db_client
+                .get_worker_reviews(worker.user_id)
+                .await
+                .unwrap_or_default();
 
-        WorkerProfileResponse {
-            profile: worker,
-            portfolio,
-            reviews,
-        }
-    })
-).await;
+            // Get the user info
+            match app_state.db_client
+                .get_user(Some(worker.user_id), None, None, None)
+                .await
+            {
+                Ok(Some(worker_user)) => Ok(WorkerProfileResponse {
+                    user: worker_user,
+                    profile: worker,
+                    portfolio,
+                    reviews,
+                }),
+                Ok(None) => Err(HttpError::not_found("Worker user not found")),
+                Err(e) => Err(HttpError::server_error(e.to_string())),
+            }
+        })
+    ).await;
+
+    // Filter out any errors from the responses
+    let worker_responses: Vec<_> = worker_responses
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect();
 
     let total = worker_responses.len() as i64;
     let total_pages = ((total as f64) / (limit as f64)).ceil() as u32;
@@ -851,7 +866,14 @@ pub async fn get_worker_details(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+    let worker_user = app_state.db_client
+        .get_user(Some(worker_id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Worker user not found"))?;
+
     let response = WorkerProfileResponse {
+        user: worker_user,
         profile: worker_profile,
         portfolio,
         reviews,
@@ -1077,6 +1099,7 @@ pub async fn release_escrow_payment(
 
 #[derive(Debug, serde::Serialize)]
 pub struct WorkerProfileResponse {
+    pub user: User,
     pub profile: WorkerProfile,
     pub portfolio: Vec<WorkerPortfolio>,
     pub reviews: Vec<JobReview>,
