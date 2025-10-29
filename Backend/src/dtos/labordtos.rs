@@ -171,6 +171,7 @@ pub struct JobApplicationResponse {
     pub id: Uuid,
     pub job_id: Uuid,
     pub worker_id: Uuid,
+    pub worker_user_id: Option<Uuid>,  ///added here
     pub proposed_rate: f64,
     pub estimated_completion: i32,
     pub cover_letter: String,
