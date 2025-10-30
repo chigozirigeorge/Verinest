@@ -625,163 +625,6 @@ impl NairaWalletExt for DBClient {
         Ok(transaction)
     }
 
-    // async fn transfer_funds(
-    //     &self,
-    //     sender_id: Uuid,
-    //     recipient_id: Uuid,
-    //     amount: i64,
-    //     description: String,
-    //     reference: String
-    // ) -> Result<(WalletTransaction, WalletTransaction), Error> {
-    //     let mut tx = self.pool.begin().await?;
-
-    //     // Get sender and recipient wallets
-    //     let sender_wallet = sqlx::query(
-    //         "SELECT id, balance, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE"
-    //     )
-    //     .bind(sender_id)
-    //     .fetch_one(&mut *tx)
-    //     .await?;
-
-    //     let recipient_wallet = sqlx::query(
-    //         "SELECT id, balance, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE"
-    //     )
-    //     .bind(recipient_id)
-    //     .fetch_one(&mut *tx)
-    //     .await?;
-
-    //     // Check sufficient balance
-    //     if sender_wallet.get::<i64, _>("available_balance") < amount {
-    //         return Err(Error::RowNotFound); // Should be custom error
-    //     }
-
-    //     // Calculate fee
-    //     let fee = self.calculate_transaction_fee_internal(TransactionType::Transfer, amount).await?;
-    //     let total_deduction = amount + fee;
-
-    //     if sender_wallet.get::<i64, _>("available_balance") < total_deduction {
-    //         return Err(Error::RowNotFound); // Insufficient funds including fee
-    //     }
-
-    //     // Update sender wallet
-    //     let sender_balance_after = sender_wallet.get::<i64, _>("balance") - total_deduction;
-    //     let sender_available_after = sender_wallet.get::<i64, _>("available_balance") - total_deduction;
-
-    //     sqlx::query(
-    //         r#"
-    //         UPDATE naira_wallets 
-    //         SET balance = $2, available_balance = $3, updated_at = NOW(), last_activity_at = NOW()
-    //         WHERE id = $1
-    //         "#
-    //     )
-    //     .bind(sender_wallet.get::<Uuid, _>("id"))
-    //     .bind(sender_balance_after)
-    //     .bind(sender_available_after)
-    //     .execute(&mut *tx)
-    //     .await?;
-
-    //     // Update recipient wallet
-    //     let recipient_balance_after = recipient_wallet.get::<i64, _>("balance") + amount;
-    //     let recipient_available_after = recipient_wallet.get::<i64, _>("available_balance") + amount;
-
-    //     sqlx::query(
-    //         r#"
-    //         UPDATE naira_wallets 
-    //         SET balance = $2, available_balance = $3, updated_at = NOW(), last_activity_at = NOW()
-    //         WHERE id = $1
-    //         "#
-    //     )
-    //     .bind(recipient_wallet.get::<Uuid, _>("id"))
-    //     .bind(recipient_balance_after)
-    //     .bind(recipient_available_after)
-    //     .execute(&mut *tx)
-    //     .await?;
-
-    //     // Create sender transaction (debit)
-    //     let sender_tx = sqlx::query_as::<_, WalletTransaction>(
-    //         r#"
-    //         INSERT INTO wallet_transactions 
-    //         (wallet_id, user_id, transaction_type, amount, balance_before, balance_after, 
-    //          reference, description, recipient_wallet_id, fee_amount, status)
-    //         VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $7, $8, $9, 'completed')
-    //         RETURNING 
-    //             id, 
-    //             wallet_id, 
-    //             user_id, 
-    //             transaction_type,
-    //             amount, 
-    //             balance_before, 
-    //             balance_after, 
-    //             status,
-    //             reference, 
-    //             external_reference, 
-    //             payment_method,
-    //             description, 
-    //             metadata, 
-    //             job_id, 
-    //             recipient_wallet_id, 
-    //             fee_amount,
-    //             created_at, 
-    //             updated_at, 
-    //             completed_at
-    //         "#
-    //     )
-    //     .bind(sender_wallet.get::<Uuid, _>("id"))
-    //     .bind(sender_id)
-    //     .bind(total_deduction)
-    //     .bind(sender_wallet.get::<i64, _>("balance"))
-    //     .bind(sender_balance_after)
-    //     .bind(reference.clone())
-    //     .bind(format!("Transfer to user: {}", description))
-    //     .bind(recipient_wallet.get::<Uuid, _>("id"))
-    //     .bind(fee)
-    //     .fetch_one(&mut *tx)
-    //     .await?;
-
-    //     // Create recipient transaction (credit)
-    //     let recipient_tx = sqlx::query_as::<_, WalletTransaction>(
-    //         r#"
-    //         INSERT INTO wallet_transactions 
-    //         (wallet_id, user_id, transaction_type, amount, balance_before, balance_after, 
-    //          reference, description, recipient_wallet_id, status)
-    //         VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $7, $8, 'completed')
-    //         RETURNING 
-    //             id, 
-    //             wallet_id, 
-    //             user_id, 
-    //             transaction_type,
-    //             amount, 
-    //             balance_before, 
-    //             balance_after, 
-    //             status,
-    //             reference, 
-    //             external_reference, 
-    //             payment_method,
-    //             description, 
-    //             metadata, 
-    //             job_id, 
-    //             recipient_wallet_id, 
-    //             fee_amount,
-    //             created_at, 
-    //             updated_at, 
-    //             completed_at
-    //         "#
-    //     )
-    //     .bind(recipient_wallet.get::<Uuid, _>("id"))
-    //     .bind(recipient_id)
-    //     .bind(amount)
-    //     .bind(recipient_wallet.get::<i64, _>("balance"))
-    //     .bind(recipient_balance_after)
-    //     .bind(reference)
-    //     .bind(format!("Transfer from user: {}", description))
-    //     .bind(sender_wallet.get::<Uuid, _>("id"))
-    //     .fetch_one(&mut *tx)
-    //     .await?;
-
-    //     tx.commit().await?;
-    //     Ok((sender_tx, recipient_tx))
-    // }
-
     async fn transfer_funds(
     &self,
     sender_id: Uuid,
@@ -1345,68 +1188,95 @@ impl NairaWalletExt for DBClient {
     .fetch_optional(&self.pool)
     .await?;
 
-    if let Some(limit) = limits {
-        // Handle NUMERIC types properly - convert to i64
-        let per_transaction_limit: i64 = limit.get::<Option<BigDecimal>, _>("per_transaction_limit")
-            .and_then(|bd| bd.to_i64())
-            .unwrap_or(i64::MAX);
+    // If no limits found, use generous defaults (or return true to allow transaction)
+    let (per_transaction_limit, daily_limit, monthly_limit) = if let Some(limit) = limits {
+        (
+            limit.get::<Option<BigDecimal>, _>("per_transaction_limit")
+                .and_then(|bd| bd.to_i64())
+                .unwrap_or(i64::MAX),
+            limit.get::<Option<BigDecimal>, _>("daily_limit")
+                .and_then(|bd| bd.to_i64())
+                .unwrap_or(i64::MAX),
+            limit.get::<Option<BigDecimal>, _>("monthly_limit")
+                .and_then(|bd| bd.to_i64())
+                .unwrap_or(i64::MAX),
+        )
+    } else {
+        // No limits configured - use generous defaults based on tier
+        let (daily, monthly, per_tx) = match user_tier {
+            UserTier::Basic => (50_000_000i64, 500_000_000i64, 10_000_000i64),      // 500k daily, 5M monthly, 100k per-tx
+            UserTier::Verified => (500_000_000i64, 5_000_000_000i64, 100_000_000i64), // 5M daily, 50M monthly, 1M per-tx
+            UserTier::Premium => (1_000_000_000i64, 10_000_000_000i64, 500_000_000i64), // 10M daily, 100M monthly, 5M per-tx
+        };
         
-        let daily_limit: i64 = limit.get::<Option<BigDecimal>, _>("daily_limit")
-            .and_then(|bd| bd.to_i64())
-            .unwrap_or(i64::MAX);
-            
-        let monthly_limit: i64 = limit.get::<Option<BigDecimal>, _>("monthly_limit")
-            .and_then(|bd| bd.to_i64())
-            .unwrap_or(i64::MAX);
+        tracing::warn!(
+            "No wallet limits found for user_tier={:?}, transaction_type={:?}. Using defaults: daily={}, monthly={}, per_tx={}",
+            user_tier, transaction_type, daily, monthly, per_tx
+        );
+        
+        (per_tx, daily, monthly)
+    };
 
-        // Check per transaction limit
-        if amount > per_transaction_limit {
-            return Ok(false);
-        }
+    // Check per transaction limit
+    if amount > per_transaction_limit {
+        tracing::warn!("Transaction exceeds per-transaction limit: {} > {}", amount, per_transaction_limit);
+        return Ok(false);
+    }
 
-        // Check daily limit - REMOVED transaction_type filter
-        let today_total = sqlx::query(
-            r#"
-            SELECT COALESCE(SUM(amount), 0) as total
-            FROM wallet_transactions 
-            WHERE user_id = $1 
-            AND DATE(created_at) = CURRENT_DATE
-            AND status = 'completed'
-            "#
-        )
-        .bind(user_id)
-        .fetch_one(&self.pool)
-        .await?;
+    // Check daily limit
+    let today_total = sqlx::query(
+        r#"
+        SELECT COALESCE(SUM(amount), 0) as total
+        FROM wallet_transactions 
+        WHERE user_id = $1 
+        AND DATE(created_at) = CURRENT_DATE
+        AND status = 'completed'
+        AND transaction_type = $2
+        "#
+    )
+    .bind(user_id)
+    .bind(transaction_type)
+    .fetch_one(&self.pool)
+    .await?;
 
-        let today_total_amount = today_total.get::<Option<BigDecimal>, _>("total")
-            .and_then(|bd| bd.to_i64())
-            .unwrap_or(0);
+    let today_total_amount = today_total.get::<Option<BigDecimal>, _>("total")
+        .and_then(|bd| bd.to_i64())
+        .unwrap_or(0);
 
-        if today_total_amount + amount > daily_limit {
-            return Ok(false);
-        }
+    if today_total_amount + amount > daily_limit {
+        tracing::warn!(
+            "Transaction exceeds daily limit: {} + {} > {}",
+            today_total_amount, amount, daily_limit
+        );
+        return Ok(false);
+    }
 
-        // Check monthly limit - REMOVED transaction_type filter
-        let month_total = sqlx::query(
-            r#"
-            SELECT COALESCE(SUM(amount), 0) as total
-            FROM wallet_transactions 
-            WHERE user_id = $1 
-            AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
-            AND status = 'completed'
-            "#
-        )
-        .bind(user_id)
-        .fetch_one(&self.pool)
-        .await?;
+    // Check monthly limit
+    let month_total = sqlx::query(
+        r#"
+        SELECT COALESCE(SUM(amount), 0) as total
+        FROM wallet_transactions 
+        WHERE user_id = $1 
+        AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
+        AND status = 'completed'
+        AND transaction_type = $2
+        "#
+    )
+    .bind(user_id)
+    .bind(transaction_type)
+    .fetch_one(&self.pool)
+    .await?;
 
-        let month_total_amount = month_total.get::<Option<BigDecimal>, _>("total")
-            .and_then(|bd| bd.to_i64())
-            .unwrap_or(0);
+    let month_total_amount = month_total.get::<Option<BigDecimal>, _>("total")
+        .and_then(|bd| bd.to_i64())
+        .unwrap_or(0);
 
-        if month_total_amount + amount > monthly_limit {
-            return Ok(false);
-        }
+    if month_total_amount + amount > monthly_limit {
+        tracing::warn!(
+            "Transaction exceeds monthly limit: {} + {} > {}",
+            month_total_amount, amount, monthly_limit
+        );
+        return Ok(false);
     }
 
     Ok(true)
