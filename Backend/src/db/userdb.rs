@@ -93,6 +93,11 @@ pub trait UserExt {
         score_to_add: i32
     ) -> Result<User, sqlx::Error>;
 
+    async fn get_user_by_identifier(
+        &self, 
+        identifier: &str
+    ) -> Result<Option<User>, sqlx::Error>;
+
     async fn get_users_by_trustscore(
         &self,
         limit: i64,
@@ -732,6 +737,15 @@ impl UserExt for DBClient {
         .bind(score_to_add)
         .bind(user_id)
         .fetch_one(&self.pool)
+        .await
+    }
+
+    async fn get_user_by_identifier(&self, identifier: &str) -> Result<Option<User>, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            "SELECT * FROM users WHERE username = $1 OR email = $1"
+        )
+        .bind(identifier)
+        .fetch_optional(&self.pool)
         .await
     }
 
