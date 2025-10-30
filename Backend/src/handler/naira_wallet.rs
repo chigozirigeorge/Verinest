@@ -388,7 +388,7 @@ pub async fn withdraw_funds(
 
     // --- SECURITY: verify transaction PIN or email OTP for transfer ---
     if let Some(pin_str) = &body.transaction_pin {
-        if let Ok(provided_pin) = pin_str.parse::<i16>() {
+        if let Ok(provided_pin) = pin_str.parse::<i32>() {
             if auth.user.transaction_pin.is_none() || auth.user.transaction_pin.unwrap() != provided_pin {
                 return Err(HttpError::unauthorized("Invalid transaction pin"));
             }
