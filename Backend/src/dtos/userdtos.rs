@@ -419,3 +419,15 @@ pub struct SetTransactionPinDto {
     pub new_pin: String,
 }
 
+#[derive(Debug, Validate, Deserialize)]
+pub struct VerifyPasswordDto {
+    #[validate(length(min = 1, message = "Password is required"))]
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VerifyPasswordResponse {
+    pub status: String,
+    pub verified: bool,
+    pub message: String,
+}
