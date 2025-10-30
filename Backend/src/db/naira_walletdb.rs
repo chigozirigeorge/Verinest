@@ -656,7 +656,7 @@ impl NairaWalletExt for DBClient {
         return Err(Error::RowNotFound);
     }
 
-    let fee = 0;
+    let fee = 500;  /// added 500
     let total_deduction = amount + fee;
 
     // Update sender wallet
@@ -1191,15 +1191,9 @@ impl NairaWalletExt for DBClient {
     // If no limits found, use generous defaults (or return true to allow transaction)
     let (per_transaction_limit, daily_limit, monthly_limit) = if let Some(limit) = limits {
         (
-            limit.get::<Option<BigDecimal>, _>("per_transaction_limit")
-                .and_then(|bd| bd.to_i64())
-                .unwrap_or(i64::MAX),
-            limit.get::<Option<BigDecimal>, _>("daily_limit")
-                .and_then(|bd| bd.to_i64())
-                .unwrap_or(i64::MAX),
-            limit.get::<Option<BigDecimal>, _>("monthly_limit")
-                .and_then(|bd| bd.to_i64())
-                .unwrap_or(i64::MAX),
+            limit.get::<i64, _>("per_transaction_limit"),
+            limit.get::<i64, _>("daily_limit"),
+            limit.get::<i64, _>("monthly_limit"),
         )
     } else {
         // No limits configured - use generous defaults based on tier
@@ -1239,8 +1233,7 @@ impl NairaWalletExt for DBClient {
     .fetch_one(&self.pool)
     .await?;
 
-    let today_total_amount = today_total.get::<Option<BigDecimal>, _>("total")
-        .and_then(|bd| bd.to_i64())
+    let today_total_amount = today_total.get::<Option<i64>, _>("total")
         .unwrap_or(0);
 
     if today_total_amount + amount > daily_limit {
@@ -1267,8 +1260,7 @@ impl NairaWalletExt for DBClient {
     .fetch_one(&self.pool)
     .await?;
 
-    let month_total_amount = month_total.get::<Option<BigDecimal>, _>("total")
-        .and_then(|bd| bd.to_i64())
+    let month_total_amount = month_total.get::<Option<i64>, _>("total")
         .unwrap_or(0);
 
     if month_total_amount + amount > monthly_limit {
