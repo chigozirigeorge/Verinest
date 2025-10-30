@@ -93,6 +93,7 @@ pub fn users_handler() -> Router {
     .route("/oauth/google", get(get_google_user))
     .route("/transaction-pin/verify", post(verify_transaction_pin))
     .route("/transaction-pin", put(set_transaction_pin))
+    .route("/verify-password", post(verify_password))
 }
 
 
@@ -217,6 +218,44 @@ pub async fn set_transaction_pin(
     Ok(Json(UserResponseDto {
         status: "success".to_string(),
         data: UserData { user: filtered_user },
+    }))
+}
+
+pub async fn verify_password(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(user): Extension<JWTAuthMiddeware>,
+    Json(body): Json<VerifyPasswordDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    let user_id = user.user.id;
+
+    // Get user from database
+    let current_user = app_state.db_client
+        .get_user(Some(user_id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    // Verify password
+    let password_match = crate::utils::password::compare(
+        &body.password, 
+        Some(current_user.password.as_deref().unwrap_or(""))
+    ).map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    if !password_match {
+        return Ok(Json(VerifyPasswordResponse {
+            status: "error".to_string(),
+            verified: false,
+            message: "Invalid password".to_string(),
+        }));
+    }
+
+    Ok(Json(VerifyPasswordResponse {
+        status: "success".to_string(),
+        verified: true,
+        message: "Password verified successfully".to_string(),
     }))
 }
 
