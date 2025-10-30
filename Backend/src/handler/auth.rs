@@ -8,19 +8,11 @@ use validator::Validate;
 use uuid::Uuid;
 
 use crate::{
-    db::userdb::UserExt, 
-    dtos::userdtos::{
-        FilterUserDto, ForgotPasswordRequestDto, 
-        LoginUserDto, RegisterUserWithReferralDto, ResendVerificationEmailDto,
-        ResetPasswordRequestDto, Response, UserData, 
-        UserLoginResponseDto, UserResponseDto, VerifyEmailQueryDto, CheckUsernameQuery, UsernameCheckResponse
-    }, 
-    error::{ErrorMessage, HttpError}, 
-    mail::mails::{
+    AppState, db::userdb::UserExt, dtos::userdtos::{
+        CheckUsernameQuery, FilterUserDto, ForgotPasswordRequestDto, LoginUserDto, RegisterUserWithReferralDto, ResendVerificationEmailDto, ResetPasswordRequestDto, Response, UserData, UserLoginResponseDto, UserResponseDto, UsernameCheckResponse, VerifyEmailQueryDto, VerifyPasswordDto, VerifyPasswordResponse
+    }, error::{ErrorMessage, HttpError}, mail::mails::{
         send_forgot_password_email, send_verification_email, send_welcome_email
-    }, 
-    service::referral::generate_referral_code, 
-    utils::{password, token}, AppState};
+    }, middleware::JWTAuthMiddeware, service::referral::generate_referral_code, utils::{password, token}};
 
 pub fn auth_handler() -> Router {
     Router::new()
@@ -28,6 +20,7 @@ pub fn auth_handler() -> Router {
         .route("/login", post(login))
         .route("/verify", get(verify_email))
         // .route("/check-email", get(check_email_availability))
+         .route("/verify-password", post(verify_password))
         .route("/resend-verification", post(resend_verification_email))
         .route("/forgot-password", post(forgot_password))
         .route("/reset-password", post(reset_password))
@@ -425,5 +418,43 @@ pub async fn check_username_availability(
     Ok(Json(UsernameCheckResponse {
         available: true,
         message: "Username is available".to_string(),
+    }))
+}
+
+pub async fn verify_password(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(user): Extension<JWTAuthMiddeware>,
+    Json(body): Json<VerifyPasswordDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    let user_id = user.user.id;
+
+    // Get user from database
+    let current_user = app_state.db_client
+        .get_user(Some(user_id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    // Verify password
+    let password_match = crate::utils::password::compare(
+        &body.password, 
+        Some(current_user.password.as_deref().unwrap_or(""))
+    ).map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    if !password_match {
+        return Ok(Json(VerifyPasswordResponse {
+            status: "error".to_string(),
+            verified: false,
+            message: "Invalid password".to_string(),
+        }));
+    }
+
+    Ok(Json(VerifyPasswordResponse {
+        status: "success".to_string(),
+        verified: true,
+        message: "Password verified successfully".to_string(),
     }))
 }
