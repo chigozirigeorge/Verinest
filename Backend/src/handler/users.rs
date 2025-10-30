@@ -2,6 +2,7 @@
 use std::{env, sync::Arc};
 
 use axum::{extract::{Query, Path}, middleware, response::IntoResponse, routing::{get, post, put}, Extension, Json, Router};
+use chrono::Utc;
 use validator::Validate;
 use uuid::Uuid;
 
@@ -88,57 +89,124 @@ pub fn users_handler() -> Router {
     // .route("/wallet/verify", post(verify_wallet))
     // .route("/wallet/verification-message", get(generate_verification_message))
     // .route("/wallet/verification-status", get(get_wallet_verification_status))
-     .route("/oauth/google", get(get_google_user))
-    .route("/transaction-pin", put(update_transaction_pin))
+    //.route("/update_transaction-pin", put(update_transaction_pin))
+    .route("/oauth/google", get(get_google_user))
+    .route("/transaction-pin/verify", post(verify_transaction_pin))
+    .route("/transaction-pin", put(set_transaction_pin))
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct UpdateTransactionPinDto {
-    pub current_pin: Option<String>,
-    pub password: Option<String>,
-    pub new_pin: String,
-}
 
-pub async fn update_transaction_pin(
+
+
+// Separate PIN verification endpoint
+pub async fn verify_transaction_pin(
     Extension(app_state): Extension<Arc<AppState>>,
     Extension(user): Extension<JWTAuthMiddeware>,
-    Json(body): Json<UpdateTransactionPinDto>,
+    Json(body): Json<VerifyTransactionPinDto>,
 ) -> Result<impl IntoResponse, HttpError> {
-    // Validate new_pin length / format (4-6 digits)
-    let new_pin_clean = body.new_pin.trim();
-    if new_pin_clean.len() < 4 || new_pin_clean.len() > 6 || !new_pin_clean.chars().all(|c| c.is_ascii_digit()) {
-        return Err(HttpError::bad_request("new_pin must be 4-6 digits"));
-    }
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
 
     let user_id = user.user.id;
 
-    // If user already has a transaction pin, require current_pin match.
-    if let Some(existing_pin) = user.user.transaction_pin {
-        // current_pin must be provided
-        let provided = body.current_pin.as_ref().ok_or_else(|| HttpError::bad_request("current_pin is required"))?;
-        let provided_pin = provided.parse::<i16>().map_err(|_| HttpError::bad_request("Invalid current_pin format"))?;
-        if provided_pin != existing_pin {
-            return Err(HttpError::unauthorized("Invalid current transaction pin"));
+    // Get fresh user data to ensure we have latest PIN
+    let current_user = app_state.db_client
+        .get_user(Some(user_id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    // Check if user has set a transaction PIN
+    let stored_pin = current_user.transaction_pin
+        .ok_or_else(|| HttpError::bad_request("Transaction PIN not set. Please set a PIN first."))?;
+
+    // Verify the provided PIN
+    let provided_pin = body.transaction_pin.parse::<i16>()
+        .map_err(|_| HttpError::bad_request("Invalid PIN format"))?;
+
+    if provided_pin != stored_pin {
+        return Ok(Json(TransactionPinResponse {
+            status: "error".to_string(),
+            message: "Invalid transaction PIN".to_string(),
+            verified: false,
+            expires_at: None,
+        }));
+    }
+
+    // // Optional: Create a temporary verification session (expires in 5 minutes)
+    
+    // let session_token = Uuid::new_v4().to_string();
+    
+    // // Store verification session (you'll need to add this to your database)
+
+    // app_state.db_client.store_pin_verification_session(user_id, &session_token, expires_at).await?;
+
+    let expires_at = Utc::now() + chrono::Duration::minutes(5);
+
+    Ok(Json(TransactionPinResponse {
+        status: "success".to_string(),
+        message: "Transaction PIN verified successfully".to_string(),
+        verified: true,
+        expires_at: Some(expires_at),
+    }))
+}
+
+// Update your existing transaction PIN setup endpoint
+pub async fn set_transaction_pin(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(user): Extension<JWTAuthMiddeware>,
+    Json(body): Json<SetTransactionPinDto>, // Renamed from UpdateTransactionPinDto for clarity
+) -> Result<impl IntoResponse, HttpError> {
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    let user_id = user.user.id;
+
+    // Validate new PIN format
+    let new_pin_clean = body.new_pin.trim();
+    if new_pin_clean.len() != 6 || !new_pin_clean.chars().all(|c| c.is_ascii_digit()) {
+        return Err(HttpError::bad_request("Transaction PIN must be exactly 6 digits"));
+    }
+
+    let new_pin_val = new_pin_clean.parse::<i16>()
+        .map_err(|_| HttpError::bad_request("Invalid PIN format"))?;
+
+    // If user already has a PIN, require current PIN or password
+    let current_user = app_state.db_client
+        .get_user(Some(user_id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    if let Some(existing_pin) = current_user.transaction_pin {
+        // Require current PIN for PIN changes
+        if let Some(provided_pin) = &body.current_pin {
+            let provided_pin_val = provided_pin.parse::<i16>()
+                .map_err(|_| HttpError::bad_request("Invalid current PIN format"))?;
+            
+            if provided_pin_val != existing_pin {
+                return Err(HttpError::unauthorized("Invalid current transaction PIN"));
+            }
+        } else {
+            return Err(HttpError::bad_request("Current PIN is required to change existing PIN"));
         }
     } else {
-        // No existing pin — require account password to set pin
-        let provided_password = body.password.as_ref().ok_or_else(|| HttpError::bad_request("password is required to set transaction pin"))?;
-        // verify password against stored hash
-        let stored_user = app_state.db_client
-            .get_user(Some(user_id), None, None, None)
-            .await
-            .map_err(|e| HttpError::server_error(e.to_string()))?
-            .ok_or_else(|| HttpError::not_found("User not found"))?;
-
-        let pw_match = crate::utils::password::compare(provided_password, Some(stored_user.password.as_deref().unwrap_or("")))
-            .map_err(|e| HttpError::server_error(e.to_string()))?;
-        if !pw_match {
-            return Err(HttpError::unauthorized("Invalid account password"));
+        // No existing PIN - require password to set initial PIN
+        if let Some(password) = &body.password {
+            let password_match = crate::utils::password::compare(
+                password, 
+                Some(current_user.password.as_deref().unwrap_or(""))
+            ).map_err(|e| HttpError::server_error(e.to_string()))?;
+            
+            if !password_match {
+                return Err(HttpError::unauthorized("Invalid account password"));
+            }
+        } else {
+            return Err(HttpError::bad_request("Account password is required to set transaction PIN"));
         }
     }
 
-    let new_pin_val = new_pin_clean.parse::<i16>().map_err(|_| HttpError::bad_request("Invalid new_pin format"))?;
-
+    // Update the PIN
     let updated_user = app_state.db_client
         .update_transaction_pin(user_id, new_pin_val)
         .await
@@ -151,6 +219,61 @@ pub async fn update_transaction_pin(
         data: UserData { user: filtered_user },
     }))
 }
+
+////
+
+// pub async fn update_transaction_pin(
+//     Extension(app_state): Extension<Arc<AppState>>,
+//     Extension(user): Extension<JWTAuthMiddeware>,
+//     Json(body): Json<UpdateTransactionPinDto>,
+// ) -> Result<impl IntoResponse, HttpError> {
+//     // Validate new_pin length / format (4-6 digits)
+//     let new_pin_clean = body.new_pin.trim();
+//     if new_pin_clean.len() < 6 || new_pin_clean.len() > 6 || !new_pin_clean.chars().all(|c| c.is_ascii_digit()) {
+//         return Err(HttpError::bad_request("new_pin must be 6 digits"));
+//     }
+
+//     let user_id = user.user.id;
+
+//     // If user already has a transaction pin, require current_pin match.
+//     if let Some(existing_pin) = user.user.transaction_pin {
+//         // current_pin must be provided
+//         let provided = body.current_pin.as_ref().ok_or_else(|| HttpError::bad_request("current_pin is required"))?;
+//         let provided_pin = provided.parse::<i16>().map_err(|_| HttpError::bad_request("Invalid current_pin format"))?;
+//         if provided_pin != existing_pin {
+//             return Err(HttpError::unauthorized("Invalid current transaction pin"));
+//         }
+//     } else {
+//         // No existing pin — require account password to set pin
+//         let provided_password = body.password.as_ref().ok_or_else(|| HttpError::bad_request("password is required to set transaction pin"))?;
+//         // verify password against stored hash
+//         let stored_user = app_state.db_client
+//             .get_user(Some(user_id), None, None, None)
+//             .await
+//             .map_err(|e| HttpError::server_error(e.to_string()))?
+//             .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+//         let pw_match = crate::utils::password::compare(provided_password, Some(stored_user.password.as_deref().unwrap_or("")))
+//             .map_err(|e| HttpError::server_error(e.to_string()))?;
+//         if !pw_match {
+//             return Err(HttpError::unauthorized("Invalid account password"));
+//         }
+//     }
+
+//     let new_pin_val = new_pin_clean.parse::<i16>().map_err(|_| HttpError::bad_request("Invalid new_pin format"))?;
+
+//     let updated_user = app_state.db_client
+//         .update_transaction_pin(user_id, new_pin_val)
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+//     let filtered_user = FilterUserDto::filter_user(&updated_user);
+
+//     Ok(Json(UserResponseDto {
+//         status: "success".to_string(),
+//         data: UserData { user: filtered_user },
+//     }))
+// }
 
 
 

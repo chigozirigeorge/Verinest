@@ -17,6 +17,7 @@ pub enum UserRole {
     Dev,
     Worker,
     Employer,
+    Vendor,
     User
 }
 
@@ -34,6 +35,7 @@ impl UserRole {
             UserRole::Whistleblower => "whistleblower",
             UserRole::CustomerCare => "customer_care",
             UserRole::Dev => "dev",
+            UserRole::Vendor => "vendor",
             UserRole::Worker => "worker",
             UserRole::Employer => "employer"
         }

@@ -171,6 +171,7 @@ fn validate_user_role(role: &UserRole) -> Result<(), validator::ValidationError>
         UserRole::CustomerCare |
         UserRole::Dev |
         UserRole::Worker |
+        UserRole::Vendor |
         UserRole::Employer => Ok(()),
         
         UserRole::SuperAdmin => {
@@ -395,3 +396,26 @@ pub struct UsernameCheckResponse {
     pub available: bool,
     pub message: String,
 }
+
+#[derive(Debug, Validate, Deserialize)]
+pub struct VerifyTransactionPinDto {
+    #[validate(length(equal = 6, message = "Transaction PIN must be 6 digits"))]
+    pub transaction_pin: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TransactionPinResponse {
+    pub status: String,
+    pub message: String,
+    pub verified: bool,
+    pub expires_at: Option<DateTime<Utc>>, 
+}
+
+#[derive(Debug, serde::Deserialize, Validate)]
+pub struct SetTransactionPinDto {
+    pub current_pin: Option<String>,  // Required when changing existing PIN
+    pub password: Option<String>,     // Required when setting initial PIN
+    #[validate(length(equal = 6, message = "Transaction PIN must be 6 digits"))]
+    pub new_pin: String,
+}
+

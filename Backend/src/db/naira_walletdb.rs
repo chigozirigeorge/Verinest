@@ -1188,7 +1188,7 @@ impl NairaWalletExt for DBClient {
     .fetch_optional(&self.pool)
     .await?;
 
-    // If no limits found, use generous defaults (or return true to allow transaction)
+    // If no limits found, use generous defaults
     let (per_transaction_limit, daily_limit, monthly_limit) = if let Some(limit) = limits {
         (
             limit.get::<i64, _>("per_transaction_limit"),
@@ -1198,14 +1198,14 @@ impl NairaWalletExt for DBClient {
     } else {
         // No limits configured - use generous defaults based on tier
         let (daily, monthly, per_tx) = match user_tier {
-            UserTier::Basic => (50_000_000i64, 500_000_000i64, 10_000_000i64),      // 500k daily, 5M monthly, 100k per-tx
-            UserTier::Verified => (500_000_000i64, 5_000_000_000i64, 100_000_000i64), // 5M daily, 50M monthly, 1M per-tx
-            UserTier::Premium => (1_000_000_000i64, 10_000_000_000i64, 500_000_000i64), // 10M daily, 100M monthly, 5M per-tx
+            UserTier::Basic => (50_000_000i64, 500_000_000i64, 10_000_000i64),
+            UserTier::Verified => (500_000_000i64, 5_000_000_000i64, 100_000_000i64),
+            UserTier::Premium => (1_000_000_000i64, 10_000_000_000i64, 500_000_000i64),
         };
         
         tracing::warn!(
-            "No wallet limits found for user_tier={:?}, transaction_type={:?}. Using defaults: daily={}, monthly={}, per_tx={}",
-            user_tier, transaction_type, daily, monthly, per_tx
+            "No wallet limits found for user_tier={:?}, transaction_type={:?}. Using defaults",
+            user_tier, transaction_type
         );
         
         (per_tx, daily, monthly)
@@ -1217,7 +1217,7 @@ impl NairaWalletExt for DBClient {
         return Ok(false);
     }
 
-    // Check daily limit
+    // Check daily limit - handle both NUMERIC and BIGINT
     let today_total = sqlx::query(
         r#"
         SELECT COALESCE(SUM(amount), 0) as total
@@ -1233,8 +1233,16 @@ impl NairaWalletExt for DBClient {
     .fetch_one(&self.pool)
     .await?;
 
-    let today_total_amount = today_total.get::<Option<i64>, _>("total")
-        .unwrap_or(0);
+    // Handle both NUMERIC and BIGINT types
+    let today_total_amount: i64 = match today_total.try_get::<i64, _>("total") {
+        Ok(val) => val,
+        Err(_) => {
+            // Fallback to BigDecimal conversion if it's NUMERIC
+            today_total.get::<Option<BigDecimal>, _>("total")
+                .and_then(|bd| bd.to_i64())
+                .unwrap_or(0)
+        }
+    };
 
     if today_total_amount + amount > daily_limit {
         tracing::warn!(
@@ -1244,7 +1252,7 @@ impl NairaWalletExt for DBClient {
         return Ok(false);
     }
 
-    // Check monthly limit
+    // Check monthly limit - handle both NUMERIC and BIGINT
     let month_total = sqlx::query(
         r#"
         SELECT COALESCE(SUM(amount), 0) as total
@@ -1260,8 +1268,16 @@ impl NairaWalletExt for DBClient {
     .fetch_one(&self.pool)
     .await?;
 
-    let month_total_amount = month_total.get::<Option<i64>, _>("total")
-        .unwrap_or(0);
+    // Handle both NUMERIC and BIGINT types
+    let month_total_amount: i64 = match month_total.try_get::<i64, _>("total") {
+        Ok(val) => val,
+        Err(_) => {
+            // Fallback to BigDecimal conversion if it's NUMERIC
+            month_total.get::<Option<BigDecimal>, _>("total")
+                .and_then(|bd| bd.to_i64())
+                .unwrap_or(0)
+        }
+    };
 
     if month_total_amount + amount > monthly_limit {
         tracing::warn!(
