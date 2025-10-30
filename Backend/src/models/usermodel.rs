@@ -124,7 +124,7 @@ pub struct User {
     pub lga: Option<String>,
     
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub transaction_pin: Option<i16>,
+    pub transaction_pin: Option<i32>,
     
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_of_kin: Option<String>,

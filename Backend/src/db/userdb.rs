@@ -72,7 +72,7 @@ pub trait UserExt {
     async fn update_transaction_pin(
         &self,
         user_id: Uuid,
-        transaction_pin: i16,
+        transaction_pin: i32,
     ) -> Result<User, sqlx::Error>;
 
     async fn verifed_token(
@@ -642,7 +642,7 @@ impl UserExt for DBClient {
     async fn update_transaction_pin(
         &self,
         user_id: Uuid,
-        transaction_pin: i16,
+        transaction_pin: i32,
     ) -> Result<User, sqlx::Error> {
         sqlx::query_as::<_, User>(
             r#"

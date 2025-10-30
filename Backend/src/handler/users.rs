@@ -122,7 +122,7 @@ pub async fn verify_transaction_pin(
         .ok_or_else(|| HttpError::bad_request("Transaction PIN not set. Please set a PIN first."))?;
 
     // Verify the provided PIN
-    let provided_pin = body.transaction_pin.parse::<i16>()
+    let provided_pin = body.transaction_pin.parse::<i32>()
         .map_err(|_| HttpError::bad_request("Invalid PIN format"))?;
 
     if provided_pin != stored_pin {
@@ -169,7 +169,7 @@ pub async fn set_transaction_pin(
         return Err(HttpError::bad_request("Transaction PIN must be exactly 6 digits"));
     }
 
-    let new_pin_val = new_pin_clean.parse::<i16>()
+    let new_pin_val = new_pin_clean.parse::<i32>()
         .map_err(|_| HttpError::bad_request("Invalid PIN format"))?;
 
     // If user already has a PIN, require current PIN or password
@@ -182,7 +182,7 @@ pub async fn set_transaction_pin(
     if let Some(existing_pin) = current_user.transaction_pin {
         // Require current PIN for PIN changes
         if let Some(provided_pin) = &body.current_pin {
-            let provided_pin_val = provided_pin.parse::<i16>()
+            let provided_pin_val = provided_pin.parse::<i32>()
                 .map_err(|_| HttpError::bad_request("Invalid current PIN format"))?;
             
             if provided_pin_val != existing_pin {
