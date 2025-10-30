@@ -490,7 +490,7 @@ pub async fn transfer_funds(
     // Find recipient by email, username, or phone
     let recipient = app_state
         .db_client
-        .get_user(None, Some(&body.recipient_identifier), Some(&body.recipient_identifier), None)
+        .get_user_by_identifier(&body.recipient_identifier)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("Recipient not found"))?;
@@ -501,16 +501,16 @@ pub async fn transfer_funds(
 
     let amount_kobo = naira_to_kobo(body.amount);
 
-    // Check transaction limits
-    let can_transact = app_state
-        .db_client
-        .check_transaction_limits(auth.user.id, TransactionType::Transfer, amount_kobo)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+    // // Check transaction limits
+    // let can_transact = app_state
+    //     .db_client
+    //     .check_transaction_limits(auth.user.id, TransactionType::Transfer, amount_kobo)
+    //     .await
+    //     .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    if !can_transact {
-        return Err(HttpError::bad_request("Transaction exceeds your limits"));
-    }
+    // if !can_transact {
+    //     return Err(HttpError::bad_request("Transaction exceeds your limits"));
+    // }
 
     // Generate reference
     let reference = generate_transaction_reference();
@@ -986,12 +986,14 @@ async fn process_paystack_successful_payment(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+    let transaction_type = transaction.transaction_type.unwrap_or(TransactionType::Deposit);
+
     // Credit the wallet
     let _wallet_transaction = app_state.db_client
         .credit_wallet(
             transaction.user_id,
             amount_kobo,
-            transaction.transaction_type,
+            transaction_type,
             "Payment confirmed via Paystack webhook".to_string(),
             reference.to_string(),
             updated_transaction.external_reference.clone(),
@@ -1170,12 +1172,15 @@ async fn process_flutterwave_completed_charge(
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+
+        let transaction_type = transaction.transaction_type.unwrap_or(TransactionType::Deposit);
+
         // Credit the wallet
         let _ = app_state.db_client
             .credit_wallet(
                 transaction.user_id,
                 amount_kobo,
-                transaction.transaction_type,
+                transaction_type,
                 "Payment confirmed via Flutterwave webhook".to_string(),
                 tx_ref.to_string(),
                 updated_transaction.external_reference.clone(),

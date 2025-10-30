@@ -5,7 +5,15 @@ use uuid::Uuid;
 use validator::Validate;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, sqlx::Type, PartialEq)]
-#[sqlx(type_name = "transaction_type", rename_all = "snake_case")]
+#[sqlx(type_name = "user_tier", rename_all = "lowercase")]
+pub enum UserTier {
+    Basic,
+    Verified,
+    Premium,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, sqlx::Type, PartialEq)]
+#[sqlx(type_name = "transaction_type", rename_all = "lowercase")]
 pub enum TransactionType {
     Deposit,
     Withdrawal,
@@ -103,7 +111,7 @@ pub struct WalletTransaction {
     pub id: Uuid,
     pub wallet_id: Uuid,
     pub user_id: Uuid,
-    pub transaction_type: TransactionType,
+    pub transaction_type: Option<TransactionType>,
     pub amount: i64, // in kobo
     pub balance_before: i64,
     pub balance_after: i64,
@@ -171,10 +179,11 @@ pub struct TransactionFee {
     pub created_at: Option<DateTime<Utc>>,
 }
 
+
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WalletLimit {
     pub id: Uuid,
-    pub user_tier: String, // basic, verified, premium
+    pub user_tier: UserTier, // basic, verified, premium
     pub transaction_type: TransactionType,
     pub daily_limit: i64,
     pub monthly_limit: i64,

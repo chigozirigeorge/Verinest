@@ -65,10 +65,10 @@ pub struct TransferRequestDto {
     #[validate(length(min = 1, max = 200, message = "Description must be between 1 and 200 characters"))]
     pub description: String,
     // Security fields
-    #[serde(default)]
-    pub transaction_pin: Option<String>,
-    #[serde(default)]
-    pub email_otp: Option<String>,
+    // #[serde(default)]
+    // pub transaction_pin: Option<String>,
+    // #[serde(default)]
+    // pub email_otp: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -267,7 +267,7 @@ impl From<WalletTransaction> for TransactionResponseDto {
     fn from(tx: WalletTransaction) -> Self {
         Self {
             id: tx.id,
-            transaction_type: tx.transaction_type,
+            transaction_type: tx.transaction_type.unwrap_or(TransactionType::Transfer),
             amount: tx.amount_in_naira(),
             fee_amount: tx.fee_amount_in_naira(),
             balance_before: kobo_to_naira(tx.balance_before),
