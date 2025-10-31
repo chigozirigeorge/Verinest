@@ -52,4 +52,8 @@ set -e
 echo "Building release binary..."
 cargo build --release
 
-echo "✅ Build complete. Binary at target/release/verinest"
+echo "Moving binary to /app/bin..."
+mkdir -p /app/bin
+cp target/release/verinest /app/bin/verinest
+
+echo "✅ Build complete. Binary at /app/bin/verinest"
