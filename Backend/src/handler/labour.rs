@@ -826,7 +826,7 @@ pub async fn get_pending_verifications(
     Extension(auth): Extension<JWTAuthMiddeware>,
 ) -> Result<impl IntoResponse, HttpError> {
     let disputes = app_state.db_client
-        .get_pending_verifications(auth.user.id)
+        .get_pending_verifications_f(auth.user.id)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 

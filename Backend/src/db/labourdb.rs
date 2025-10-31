@@ -217,7 +217,7 @@ pub trait LaborExt {
         decision: String,
     ) -> Result<Dispute, Error>;
 
-    async fn get_pending_verifications(
+    async fn get_pending_verifications_f(
         &self,
         verifier_id: Uuid,
     ) -> Result<Vec<Dispute>, Error>;
@@ -1175,7 +1175,7 @@ async fn assign_worker_to_job(
         .await
     }
 
-    async fn get_pending_verifications(
+    async fn get_pending_verifications_f(
         &self,
         verifier_id: Uuid,
     ) -> Result<Vec<Dispute>, Error> {
