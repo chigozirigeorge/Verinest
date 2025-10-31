@@ -750,11 +750,11 @@ async fn get_jobs_by_location_and_category(
 async fn assign_worker_to_job(
     &self,
     job_id: Uuid,
-    worker_id: Uuid
+    worker_user_id: Uuid, // Change parameter name for clarity
 ) -> Result<(Job, EscrowTransaction), Error> {
     let mut tx = self.pool.begin().await?;
 
-    // First update the job
+    // First update the job - use worker_user_id directly
     let job = sqlx::query_as::<_, Job>(
         r#"
         UPDATE jobs 
@@ -778,7 +778,7 @@ async fn assign_worker_to_job(
         "#
     )
     .bind(job_id)
-    .bind(worker_id)
+    .bind(worker_user_id) // Use the user_id directly
     .fetch_one(&mut *tx)
     .await?;
 
@@ -794,7 +794,7 @@ async fn assign_worker_to_job(
     )
     .bind(job_id.clone())
     .bind(job.employer_id.clone())
-    .bind(worker_id)
+    .bind(worker_user_id) // Use the user_id here too
     .bind(job.escrow_amount.clone())
     .bind(job.platform_fee.clone())
     .fetch_one(&mut *tx)
