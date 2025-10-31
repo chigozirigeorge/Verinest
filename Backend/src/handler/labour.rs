@@ -1,12 +1,10 @@
 // handlers/labour.rs (Complete)
 use std::sync::Arc;
 use axum::{
-    extract::{Path, Query, State},
-    response::IntoResponse,
-    routing::{delete, get, post, put},
-    Extension, Json, Router
+    extract::{Path, Query, State}, http::StatusCode, response::IntoResponse, routing::{delete, get, post, put}, Extension, Json, Router
 };
 use chrono::Utc;
+use rand::Rng;
 use uuid::Uuid;
 use validator::Validate;
 use num_traits::ToPrimitive;
@@ -14,16 +12,11 @@ use num_traits::ToPrimitive;
 use crate::{
     db::{
         labourdb::LaborExt::{self},
-        userdb::UserExt,
-    }, 
-    dtos::{labordtos::*, userdtos::FilterUserDto}, error::HttpError, 
-    middleware::JWTAuthMiddeware, models::{labourmodel::*, usermodel::User}, 
-    service::{
-        dispute_service::DisputeService, 
-        error::ServiceError, labour_service::LabourService, 
-        matching_service::MatchingService
-    }, 
-    AppState
+        userdb::UserExt, verificationdb::VerificationExt,
+    }, dtos::{labordtos::*, userdtos::FilterUserDto}, error::HttpError, 
+        mail::mails, middleware::JWTAuthMiddeware, models::{labourmodel::*, 
+        usermodel::User, verificationmodels::OtpPurpose}, service::{
+    }, AppState
 };
 
 pub fn labour_handler() -> Router {
@@ -1101,23 +1094,178 @@ pub async fn get_employer_dashboard(
     )))
 }
 
-// Contract Management
+// // Contract Management
+// pub async fn sign_contract(
+//     Extension(app_state): Extension<Arc<AppState>>,
+//     Path(contract_id): Path<Uuid>,
+//     Extension(auth): Extension<JWTAuthMiddeware>,
+//     Json(body): Json<SignContractDto>,
+// ) -> Result<impl IntoResponse, HttpError> {
+//     let contract = app_state.db_client
+//         .sign_contract(contract_id, body.signer_role)
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+//     Ok(Json(ApiResponse::success(
+//         "Contract signed successfully",
+//         contract,
+//     )))
+// }
+
 pub async fn sign_contract(
     Extension(app_state): Extension<Arc<AppState>>,
     Path(contract_id): Path<Uuid>,
     Extension(auth): Extension<JWTAuthMiddeware>,
     Json(body): Json<SignContractDto>,
 ) -> Result<impl IntoResponse, HttpError> {
-    let contract = app_state.db_client
-        .sign_contract(contract_id, body.signer_role)
+    // Get contract and verify user is a participant
+    let contract_result = sqlx::query_as::<_, JobContract>(
+        "SELECT * FROM job_contracts WHERE id = $1"
+    )
+    .bind(contract_id)
+    .fetch_optional(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?
+    .ok_or_else(|| HttpError::not_found("Contract not found"))?;
+
+    // Determine user role
+    let signer_role = if contract_result.employer_id == auth.user.id {
+        "employer"
+    } else if contract_result.worker_id == auth.user.id {
+        "worker"
+    } else {
+        return Err(HttpError::unauthorized("Not authorized to sign this contract"));
+    };
+
+    // Check if already signed
+    let already_signed = match signer_role {
+        "employer" => contract_result.signed_by_employer.unwrap_or(false),
+        "worker" => contract_result.signed_by_worker.unwrap_or(false),
+        _ => false,
+    };
+
+    if already_signed {
+        return Err(HttpError::bad_request("Contract already signed by you"));
+    }
+
+    // If requesting OTP, send it and return
+    if body.request_otp == Some(true) {
+        let otp_code = format!("{:06}", rand::rng().random_range(0..1_000_000));
+        let expires_at = chrono::Utc::now() + chrono::Duration::minutes(10);
+        
+        // Store OTP
+        let _ = app_state.db_client
+            .create_otp(
+                auth.user.id,
+                auth.user.email.clone(),
+                otp_code.clone(),
+                OtpPurpose::SensitiveAction,
+                expires_at,
+            )
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+        // Send email
+        let _ = mails::send_contract_signature_otp_email(
+            &auth.user.email,
+            &auth.user.name,
+            &otp_code,
+            &contract_result.agreed_rate.to_f64().unwrap_or(0.0),
+            contract_result.agreed_timeline,
+        ).await;
+
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({
+                "status": "success",
+                "message": "OTP sent to your email. Please verify to sign contract."
+            }))
+        ).into_response());
+    }
+
+    // Verify OTP before signing
+    let otp_code = body.otp_code.ok_or_else(|| 
+        HttpError::bad_request("OTP code required to sign contract")
+    )?;
+
+    let otp = app_state.db_client
+        .get_valid_otp(&auth.user.email, &otp_code, OtpPurpose::SensitiveAction)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::unauthorized("Invalid or expired OTP"))?;
+
+    // Mark OTP as used
+    let _ = app_state.db_client
+        .mark_otp_used(otp.id)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    Ok(Json(ApiResponse::success(
-        "Contract signed successfully",
-        contract,
-    )))
+    // Sign the contract
+    let signed_contract = app_state.db_client
+        .sign_contract(contract_id, signer_role.to_string())
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Get job details for notification
+    let job = app_state.db_client
+        .get_job_by_id(signed_contract.job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+    // Notify other party if both haven't signed
+    let both_signed = signed_contract.signed_by_employer.unwrap_or(false) 
+        && signed_contract.signed_by_worker.unwrap_or(false);
+
+    if !both_signed {
+        let other_user_id = if signer_role == "employer" {
+            signed_contract.worker_id
+        } else {
+            signed_contract.employer_id
+        };
+
+        let _ = app_state.notification_service
+            .notify_contract_awaiting_signature(other_user_id, &signed_contract)
+            .await;
+    } else {
+        // Both signed - contract is now active, create escrow if not exists
+        let escrow_exists = app_state.db_client
+            .get_escrow_by_job_id(job.id)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?
+            .is_some();
+
+        if !escrow_exists && job.assigned_worker_id.is_some() {
+            // Create escrow now that contract is fully signed
+            let platform_fee = job.budget.to_f64().unwrap_or(0.0) * 0.03;
+            let _ = app_state.db_client.create_escrow_transaction(
+                job.id,
+                job.employer_id,
+                job.assigned_worker_id.unwrap(),
+                job.budget.to_f64().unwrap_or(0.0),
+                platform_fee,
+            ).await;
+        }
+
+        // Notify both parties contract is active
+        let _ = app_state.notification_service
+            .notify_contract_fully_signed(
+                signed_contract.employer_id,
+                signed_contract.worker_id,
+                &job,
+            )
+            .await;
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(ApiResponse::success(
+            "Contract signed successfully",
+            signed_contract,
+        ))
+    ).into_response())
 }
+
 
 // Application Management
 pub async fn update_application_status(

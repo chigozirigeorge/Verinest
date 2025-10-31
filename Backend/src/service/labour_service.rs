@@ -77,12 +77,12 @@ pub async fn create_job_with_escrow(
     Ok(job)
 }
 
-// Update assign_worker_to_job method
+
 pub async fn assign_worker_to_job(
     &self,
     job_id: Uuid,
     employer_id: Uuid,
-    worker_id: Uuid,
+    worker_user_id: Uuid, // This should be the USER ID
 ) -> Result<JobAssignmentResult, ServiceError> {
     let mut tx = self.db_client.pool.begin().await?;
 
@@ -99,8 +99,8 @@ pub async fn assign_worker_to_job(
         return Err(ServiceError::InvalidJobStatus(job_id, job.status.unwrap()));
     }
 
-    // Verify worker exists and is available
-    let worker_profile = self.db_client.get_worker_profile(worker_id)
+    // Verify worker exists and is available - use get_worker_profile which expects USER ID
+    let worker_profile = self.db_client.get_worker_profile(worker_user_id)
         .await?;
 
     if !worker_profile.is_available.unwrap_or(false) {
@@ -108,13 +108,14 @@ pub async fn assign_worker_to_job(
     }
 
     // Update job with assigned worker AND create escrow in one transaction
-    let (updated_job, escrow) = self.db_client.assign_worker_to_job(job_id, worker_id).await?;
+    // The db_client.assign_worker_to_job expects USER ID for assignment
+    let (updated_job, escrow) = self.db_client.assign_worker_to_job(job_id, worker_user_id).await?;
 
-    // Create job contract
+    // Create job contract - use worker_user_id (USER ID)
     let contract = self.db_client.create_job_contract(
         job_id,
         employer_id,
-        worker_id,
+        worker_user_id, // Use USER ID here
         job.budget.to_f64().unwrap_or(0.0),
         job.estimated_duration_days,
         "Standard work agreement terms".to_string(),
@@ -123,17 +124,17 @@ pub async fn assign_worker_to_job(
     // Audit log
     self.audit_service.log_job_assignment(
         employer_id,
-        worker_id,
+        worker_user_id, // Use USER ID here
         &updated_job,
         &contract,
     ).await?;
 
     tx.commit().await?;
 
-    // Send notifications
-    self.notification_service.notify_job_assigned_to_worker(worker_id, &updated_job).await?;
+    // Send notifications - use worker_user_id (USER ID)
+    self.notification_service.notify_job_assigned_to_worker(worker_user_id, &updated_job).await?;
     self.notification_service.notify_employer_worker_assigned(employer_id, &updated_job, &worker_profile).await?;
-    self.notification_service.notify_contract_awaiting_signature(worker_id, &contract).await?;
+    self.notification_service.notify_contract_awaiting_signature(worker_user_id, &contract).await?;
     self.notification_service.notify_contract_awaiting_signature(employer_id, &contract).await?;
 
     Ok(JobAssignmentResult {
