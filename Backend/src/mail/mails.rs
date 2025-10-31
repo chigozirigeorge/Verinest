@@ -340,3 +340,51 @@ pub async fn send_new_message_notification_email(
 
     send_email(to_email, &subject, template_path, &placeholders).await
 }
+
+
+pub async fn send_contract_signature_otp_email(
+    to_email: &str,
+    username: &str,
+    otp_code: &str,
+    agreed_rate: &f64,
+    agreed_timeline: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = "Contract Signature Verification";
+    let template_path = "src/mail/templates/Contract-Signature-OTP.html";
+    
+    let app_url = std::env::var("APP_URL")
+        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+    
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{otp_code}}".to_string(), otp_code.to_string()),
+        ("{{agreed_rate}}".to_string(), format!("₦{:.2}", agreed_rate)),
+        ("{{agreed_timeline}}".to_string(), format!("{} days", agreed_timeline)),
+        ("{{app_url}}".to_string(), app_url),
+    ];
+
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
+pub async fn send_service_inquiry_email(
+    to_email: &str,
+    username: &str,
+    inquirer_name: &str,
+    service_title: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = "New Inquiry for Your Service";
+    let template_path = "src/mail/templates/Service-Inquiry.html";
+    
+    let app_url = std::env::var("APP_URL")
+        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+    let inquiries_url = format!("{}/vendor/inquiries", app_url);
+    
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{inquirer_name}}".to_string(), inquirer_name.to_string()),
+        ("{{service_title}}".to_string(), service_title.to_string()),
+        ("{{inquiries_url}}".to_string(), inquiries_url),
+    ];
+
+    send_email(to_email, subject, template_path, &placeholders).await
+}
