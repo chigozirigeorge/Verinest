@@ -731,6 +731,33 @@ impl NotificationService {
         
         Ok(())
     }
+
+    pub async fn notify_contract_fully_signed(
+        &self,
+        employer_id: Uuid,
+        worker_id: Uuid,
+        job: &Job,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+       let _worker_email =  self.create_notification_with_email(
+            worker_id, 
+            "Contract Accepted".to_string(), 
+            format!("Job Contract proposal for '{}' has been fully signed, please remember to update the job", job.title), 
+            "contract_signed".to_string(), 
+            Some(job.id), 
+            true
+        ).await?;
+
+        let _employer_email =  self.create_notification_with_email(
+            employer_id, 
+            "Contract Accepted".to_string(), 
+            format!("Job Contract proposal for '{}' has been fully signed, please remember to update the job", job.title), 
+            "contract_signed".to_string(), 
+            Some(job.id), 
+            true
+        ).await?;
+
+        Ok(())
+    }
     
     pub async fn notify_contract_accepted(
         &self,
@@ -878,7 +905,7 @@ impl NotificationService {
         &self,
         employer_id: Uuid,
         job: &Job,
-        worker_profile: &WorkerProfile,
+        _worker_profile: &WorkerProfile,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.create_notification_with_email(
             employer_id,
@@ -906,6 +933,121 @@ impl NotificationService {
         ).await?;
         Ok(())
     }
+
+    //  pub async fn notify_subscription_upgraded(
+    //     &self,
+    //     user_id: Uuid,
+    //     tier: SubscriptionTier,
+    // ) -> Result<(), Box<dyn std::error::Error>> {
+    //     let tier_name = match tier {
+    //         SubscriptionTier::Normal => "Normal",
+    //         SubscriptionTier::Pro => "Pro",
+    //         SubscriptionTier::Premium => "Premium",
+    //     };
+        
+    //     self.create_notification_with_email(
+    //         user_id,
+    //         format!("Subscription Upgraded to {}", tier_name),
+    //         format!("Your vendor subscription has been upgraded to {} tier", tier_name),
+    //         "subscription_upgraded".to_string(),
+    //         None,
+    //         true,
+    //     ).await?;
+        
+    //     Ok(())
+    // }
+    
+    pub async fn notify_service_inquiry(
+        &self,
+        vendor_user_id: Uuid,
+        inquirer_name: &str,
+        service_title: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Ok(Some(user)) = self.db_client.get_user(Some(vendor_user_id), None, None, None).await {
+            self.create_notification_with_email(
+                vendor_user_id,
+                "New Service Inquiry".to_string(),
+                format!("{} is interested in your service: {}", inquirer_name, service_title),
+                "service_inquiry".to_string(),
+                None,
+                true,
+            ).await?;
+            
+            // Send dedicated email
+            let _ = mails::send_service_inquiry_email(
+                &user.email,
+                &user.name,
+                inquirer_name,
+                service_title,
+            ).await;
+        }
+        
+        Ok(())
+    }
+    
+    pub async fn notify_service_expiring(
+        &self,
+        vendor_user_id: Uuid,
+        service_title: &str,
+        days_until_expiry: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.create_notification_with_email(
+            vendor_user_id,
+            "Service Expiring Soon".to_string(),
+            format!("Your service '{}' will expire in {} days", service_title, days_until_expiry),
+            "service_expiring".to_string(),
+            None,
+            true,
+        ).await?;
+        
+        Ok(())
+    }
+    
+    pub async fn notify_subscription_expiring(
+        &self,
+        vendor_user_id: Uuid,
+        days_until_expiry: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.create_notification_with_email(
+            vendor_user_id,
+            "Subscription Expiring Soon".to_string(),
+            format!("Your vendor subscription will expire in {} days. Renew now to avoid service interruptions.", days_until_expiry),
+            "subscription_expiring".to_string(),
+            None,
+            true,
+        ).await?;
+        
+        Ok(())
+    }
+    
+    // pub async fn notify_contract_fully_signed(
+    //     &self,
+    //     employer_id: Uuid,
+    //     worker_id: Uuid,
+    //     job: &Job,
+    // ) -> Result<(), Box<dyn std::error::Error>> {
+    //     // Notify employer
+    //     self.create_notification_with_email(
+    //         employer_id,
+    //         "Contract Activated".to_string(),
+    //         format!("Both parties have signed the contract for: {}", job.title),
+    //         "contract_active".to_string(),
+    //         Some(job.id),
+    //         true,
+    //     ).await?;
+        
+    //     // Notify worker
+    //     self.create_notification_with_email(
+    //         worker_id,
+    //         "Contract Activated".to_string(),
+    //         format!("Contract is now active for: {}", job.title),
+    //         "contract_active".to_string(),
+    //         Some(job.id),
+    //         true,
+    //     ).await?;
+        
+    //     Ok(())
+    // }
 
     // pub async fn notify_job_assigned_to_worker(
     //     &self,
