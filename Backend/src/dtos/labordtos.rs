@@ -504,10 +504,10 @@ pub struct ReleasePaymentDto {
 }
 
 
-#[derive(Debug, Deserialize)]
-pub struct SignContractDto {
-    pub signer_role: String,
-}
+// #[derive(Debug, Deserialize)]
+// pub struct SignContractDto {
+//     pub signer_role: String,
+// }
 
 #[derive(Debug, Serialize)]
 pub struct WorkerProfileResponse {
@@ -546,4 +546,10 @@ pub struct WorkerProfileApplicationResponse {
     pub rating: f32,
     pub completed_jobs: i32,
     pub skills: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct SignContractDto {
+    pub otp_code: Option<String>, // OTP for verification
+    pub request_otp: Option<bool>, // Flag to request OTP
 }
