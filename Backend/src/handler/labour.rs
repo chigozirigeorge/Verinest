@@ -1235,7 +1235,7 @@ pub async fn get_worker_details_smart(
         worker_profile.id, worker_profile.user_id, found_as);
 
     // Get portfolio using worker_profile.id (this is the CORRECT foreign key)
-    let portfolio = match app_state.db_client.get_worker_portfolio(worker_profile.id).await {
+    let portfolio = match app_state.db_client.get_worker_portfolio(worker_identifier.clone()).await {
         Ok(portfolio_items) => {
             println!("✅ [get_worker_details_smart] Found {} portfolio items", portfolio_items.len());
             portfolio_items
