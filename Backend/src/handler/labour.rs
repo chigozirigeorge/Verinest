@@ -1167,12 +1167,12 @@ pub async fn get_worker_details(
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     let portfolio = app_state.db_client
-        .get_worker_portfolio(worker_id)
+        .get_worker_portfolio(worker_profile.id.clone())
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     let reviews = app_state.db_client
-        .get_worker_reviews(worker_id)
+        .get_worker_reviews(worker_profile.id)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 

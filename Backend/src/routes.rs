@@ -211,8 +211,8 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/jobs", get(search_jobs))
         .route("/jobs/:job_id", get(get_job_details))
         .route("/workers/search", get(search_workers))
-        // .route("/workers/:worker_id", get(get_worker_details))
-        .route("/workers/:worker_id", get(get_worker_details_smart));
+        .route("/workers/:worker_id", get(get_worker_details));
+        // .route("/workers/:worker_id", get(get_worker_details_smart));
 
     // Protected labour routes (require auth - job applications, profiles, etc.)
     let protected_labour_routes = Router::new()
