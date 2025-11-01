@@ -1197,7 +1197,7 @@ pub async fn get_worker_details(
     )))
 }
 
-// In labour.rs - Smart endpoint that tries both user_id and profile_id
+// In labour.rs - Fix the smart worker details endpoint
 pub async fn get_worker_details_smart(
     Extension(app_state): Extension<Arc<AppState>>,
     Path(worker_identifier): Path<Uuid>,
@@ -1226,17 +1226,19 @@ pub async fn get_worker_details_smart(
         }
     }
 
-    // Rest of the handler remains the same...
+    // Get portfolio using worker_profile.id
     let portfolio = app_state.db_client
-        .get_worker_portfolio(worker_profile.id)    //try id and see if it works
+        .get_worker_portfolio(worker_profile.id)
         .await
         .unwrap_or_default();
 
+    // Get reviews using worker_profile.user_id
     let reviews = app_state.db_client
         .get_worker_reviews(worker_profile.user_id)
         .await
         .unwrap_or_default();
 
+    // Get worker user details using worker_profile.user_id
     let worker_user = app_state.db_client
         .get_user(Some(worker_profile.user_id), None, None, None)
         .await
