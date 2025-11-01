@@ -12,3 +12,6 @@ pub mod audit_service;
 pub mod matching_service;
 pub mod trust_service;
 pub mod verification_service;
+pub mod subscriptions;
+pub mod background_jobs;
+pub mod vendor_order_service;

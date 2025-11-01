@@ -21,6 +21,7 @@ use routes::create_router;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::filter::LevelFilter;
+use crate::service::subscriptions::start_vendor_expiry_checker;
 
 // Import the services we created
 use service::{
@@ -97,11 +98,69 @@ impl AppState {
     }
 }
 
+// #[tokio::main]
+// async fn main() {
+//     tracing_subscriber::fmt()
+//     .with_max_level(LevelFilter::DEBUG)
+//     .init();
+
+//     dotenv().ok();
+
+//     let config = Config::init();
+
+//     let pool = match PgPoolOptions::new()
+//             .max_connections(10)
+//             .connect(&config.database_url)
+//             .await
+//     {
+//         Ok(pool) => {
+//             println!("✅Connection to the database is successful!");
+//             pool
+//         }
+//         Err(err) => {
+//             println!("🔥 Failed to connect to the database: {:?}", err);
+//             std::process::exit(1);
+//         }
+//     };
+
+//     let allowed_origins = vec![
+//     "https://verinestorg.vercel.app".parse::<HeaderValue>().unwrap(),
+//     "https://verinest.up.railway.app".parse::<HeaderValue>().unwrap(),
+//     "http://localhost:5173".parse::<HeaderValue>().unwrap(),
+//     "http://localhost:8000".parse::<HeaderValue>().unwrap(),
+// ];
+
+//     let cors = CorsLayer::new()
+//         .allow_origin(AllowOrigin::list(allowed_origins))
+//         .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
+//         .allow_credentials(true)
+//         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH]);
+
+//     let db_client = DBClient::new(pool);
+//     let app_state = AppState::new(db_client, config.clone());
+
+//     let app = create_router(Arc::new(app_state)).layer(cors);
+
+//     println!(
+//         "🚀 Server is running on http://localhost:{}",
+//         config.port
+//     );
+
+//     // tokio::spawn(start_vendor_expiry_checker(app_state.clone()));
+
+//     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", &config.port))
+//     .await
+//     .unwrap();
+
+//     axum::serve(listener, app).await.unwrap();
+// }
+
+// main.rs - Update with background jobs
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
-    .with_max_level(LevelFilter::DEBUG)
-    .init();
+        .with_max_level(LevelFilter::DEBUG)
+        .init();
 
     dotenv().ok();
 
@@ -113,7 +172,7 @@ async fn main() {
             .await
     {
         Ok(pool) => {
-            println!("✅Connection to the database is successful!");
+            println!("✅ Connection to the database is successful!");
             pool
         }
         Err(err) => {
@@ -123,11 +182,11 @@ async fn main() {
     };
 
     let allowed_origins = vec![
-    "https://verinestorg.vercel.app".parse::<HeaderValue>().unwrap(),
-    "https://verinest.up.railway.app".parse::<HeaderValue>().unwrap(),
-    "http://localhost:5173".parse::<HeaderValue>().unwrap(),
-    "http://localhost:8000".parse::<HeaderValue>().unwrap(),
-];
+        "https://verinestorg.vercel.app".parse::<HeaderValue>().unwrap(),
+        "https://verinest.up.railway.app".parse::<HeaderValue>().unwrap(),
+        "http://localhost:5173".parse::<HeaderValue>().unwrap(),
+        "http://localhost:8000".parse::<HeaderValue>().unwrap(),
+    ];
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(allowed_origins))
@@ -136,18 +195,32 @@ async fn main() {
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH]);
 
     let db_client = DBClient::new(pool);
-    let app_state = AppState::new(db_client, config.clone());
+    let app_state = Arc::new(AppState::new(db_client, config.clone()));
 
-    let app = create_router(Arc::new(app_state)).layer(cors);
+    let app = create_router(app_state.clone()).layer(cors);
 
     println!(
         "🚀 Server is running on http://localhost:{}",
         config.port
     );
 
+    // Start background jobs
+    let app_state_clone = app_state.clone();
+    tokio::spawn(async move {
+        service::background_jobs::start_auto_confirmation_job(app_state_clone).await;
+    });
+
+    let app_state_clone = app_state.clone();
+    tokio::spawn(async move {
+        service::background_jobs::start_service_expiry_job(app_state_clone).await;
+    });
+
+    // Start vendor subscription expiry checker (already exists)
+    tokio::spawn(start_vendor_expiry_checker(app_state.clone()));
+
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", &config.port))
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     axum::serve(listener, app).await.unwrap();
 }

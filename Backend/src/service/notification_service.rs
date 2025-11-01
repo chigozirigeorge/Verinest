@@ -404,13 +404,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
-    models::{
-        labourmodel::*,
-        chatnodels::Message,
-    },
-    db::userdb::UserExt,
-    db::db::DBClient,
-    mail::mails,
+    db::{db::DBClient, userdb::UserExt}, mail::mails, models::{
+        chatnodels::Message, labourmodel::*, 
+        vendormodels::{ServiceDispute, ServiceOrder, VendorService, SubscriptionTier}
+    }
 };
 use crate::db::labourdb::LaborExt;
 
@@ -956,6 +953,80 @@ impl NotificationService {
         
     //     Ok(())
     // }
+
+    pub async fn notify_new_order(
+        &self,
+        vendor_user_id: Uuid,
+        service_title: &str,
+        total_amount: f64,
+        order_number: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.create_notification_with_email(
+            vendor_user_id,
+            "New Order Received".to_string(),
+            format!("New order #{} for '{}' - ₦{:.2}", order_number, service_title, total_amount),
+            "new_order".to_string(),
+            None,
+            true,
+        ).await?;
+        
+        Ok(())
+    }
+
+    pub async fn notify_order_placed(
+        &self,
+        buyer_id: Uuid,
+        service_title: &str,
+        total_amount: f64,
+        order_number: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.create_notification_with_email(
+            buyer_id,
+            "Order Placed Successfully".to_string(),
+            format!("Your order #{} for '{}' has been placed - ₦{:.2}", order_number, service_title, total_amount),
+            "order_placed".to_string(),
+            None,
+            true,
+        ).await?;
+        
+        Ok(())
+    }
+
+    pub async fn notify_order_confirmed(
+        &self,
+        buyer_id: Uuid,
+        service_title: &str,
+        order_number: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.create_notification_with_email(
+            buyer_id,
+            "Order Confirmed".to_string(),
+            format!("Vendor confirmed your order #{} for '{}'", order_number, service_title),
+            "order_confirmed".to_string(),
+            None,
+            true,
+        ).await?;
+        
+        Ok(())
+    }
+
+    pub async fn notify_order_completed(
+        &self,
+        vendor_user_id: Uuid,
+        service_title: &str,
+        vendor_amount: f64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.create_notification_with_email(
+            vendor_user_id,
+            "Order Completed - Payment Released".to_string(),
+            format!("Order for '{}' completed. ₦{:.2} credited to your wallet", service_title, vendor_amount),
+            "order_completed".to_string(),
+            None,
+            true,
+        ).await?;
+        
+        Ok(())
+    }
     
     pub async fn notify_service_inquiry(
         &self,
@@ -1017,6 +1088,116 @@ impl NotificationService {
             true,
         ).await?;
         
+        Ok(())
+    }
+
+    pub async fn notify_service_purchase(
+        &self,
+        vendor_user_id: Uuid,
+        buyer_id: Uuid,
+        service: &VendorService,
+        order: &ServiceOrder,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Notify vendor
+        self.create_notification_with_email(
+            vendor_user_id,
+            "New Order Received".to_string(),
+            format!("New order for: {} (Qty: {})", service.title, order.quantity),
+            "service_order".to_string(),
+            Some(order.id),
+            true,
+        ).await?;
+        
+        // Notify buyer (confirmation)
+        self.create_notification_with_email(
+            buyer_id,
+            "Order Confirmed".to_string(),
+            format!("Your order for '{}' has been confirmed", service.title),
+            "order_confirmation".to_string(),
+            Some(order.id),
+            true,
+        ).await?;
+        
+        Ok(())
+    }
+    
+    pub async fn notify_order_shipped(
+        &self,
+        buyer_id: Uuid,
+        order: &ServiceOrder,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.create_notification_with_email(
+            buyer_id,
+            "Order Shipped".to_string(),
+            format!("Your order #{} has been shipped", order.order_number),
+            "order_shipped".to_string(),
+            Some(order.id),
+            true,
+        ).await?;
+        
+        Ok(())
+    }
+    
+    pub async fn notify_delivery_confirmed(
+        &self,
+        vendor_user_id: Uuid,
+        order: &ServiceOrder,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.create_notification_with_email(
+            vendor_user_id,
+            "Delivery Confirmed".to_string(),
+            format!("Buyer confirmed delivery for order #{}", order.order_number),
+            "delivery_confirmed".to_string(),
+            Some(order.id),
+            true,
+        ).await?;
+        
+        Ok(())
+    }
+    
+    pub async fn notify_service_dispute_created(
+        &self,
+        raised_by: Uuid,
+        against: Uuid,
+        dispute: &ServiceDispute,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Notify party being disputed against
+        self.create_notification_with_email(
+            against,
+            "Service Dispute Raised".to_string(),
+            format!("A dispute has been raised for order: {}", dispute.reason),
+            "service_dispute".to_string(),
+            Some(dispute.id),
+            true,
+        ).await?;
+        
+        // Confirm to party who raised it
+        self.create_notification_with_email(
+            raised_by,
+            "Dispute Created".to_string(),
+            "Your dispute has been submitted and is under review".to_string(),
+            "dispute_confirmation".to_string(),
+            Some(dispute.id),
+            true,
+        ).await?;
+        
+        Ok(())
+    }
+
+    pub async fn notify_subscription_upgraded(
+        &self,
+        vendor_id: Uuid,
+        subscription_tier: SubscriptionTier
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.create_notification_with_email(
+            vendor_id, 
+            "Subscription upgraded".to_string(), 
+            format!("Subscription upgrade to {:?} was successful", subscription_tier), 
+            "service upgrade".to_string(), 
+            None, 
+            true
+        ).await?;
+
         Ok(())
     }
     

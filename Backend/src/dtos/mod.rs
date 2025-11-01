@@ -3,3 +3,4 @@ pub mod propertydtos;
 pub mod labordtos;
 pub mod naira_walletdtos;
 pub mod verificationdtos;
+pub mod vendordtos;

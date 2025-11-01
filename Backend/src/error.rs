@@ -145,3 +145,18 @@ impl IntoResponse for HttpError {
 }
 
 
+impl From<sqlx::Error> for HttpError {
+    fn from(err: sqlx::Error) -> Self {
+        match err {
+            sqlx::Error::RowNotFound => HttpError::not_found("Record not found"),
+            sqlx::Error::Database(db_err) => {
+                if let Some(constraint) = db_err.constraint() {
+                    HttpError::unique_constraint_violation(format!("Database constraint violation: {}", constraint))
+                } else {
+                    HttpError::server_error(format!("Database error: {}", db_err))
+                }
+            }
+            _ => HttpError::server_error(format!("Database error: {}", err)),
+        }
+    }
+}

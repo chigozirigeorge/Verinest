@@ -19,6 +19,9 @@ pub enum ServiceError {
     
     #[error("User {0} is not authorized to perform this action on job {1}")]
     UnauthorizedJobAccess(Uuid, Uuid),
+
+    #[error("User {0} is not authorized to perform this action on Service order {1}")]
+    UnauthorizedServiceAccess(Uuid, Uuid),
     
     #[error("Insufficient funds for escrow: required {required}, available {available}")]
     InsufficientEscrowFunds { required: f64, available: f64 },
@@ -57,7 +60,8 @@ impl From<ServiceError> for HttpError {
             | ServiceError::InvalidDisputeStatus(_, _)
             | ServiceError::Validation(_) => HttpError::bad_request(error.to_string()),
             
-            ServiceError::UnauthorizedJobAccess(_, _) => HttpError::unauthorized(error.to_string()),
+            ServiceError::UnauthorizedJobAccess(_, _) 
+            | ServiceError::UnauthorizedServiceAccess(_, _)=> HttpError::unauthorized(error.to_string()),
             
             ServiceError::InsufficientEscrowFunds { .. } => HttpError::payment_required(error.to_string()),
             
@@ -84,7 +88,8 @@ impl ServiceError {
             | ServiceError::InvalidDisputeStatus(_, _)
             | ServiceError::Validation(_) => StatusCode::BAD_REQUEST,
             
-            ServiceError::UnauthorizedJobAccess(_, _) => StatusCode::UNAUTHORIZED,
+            ServiceError::UnauthorizedJobAccess(_, _)
+            | ServiceError::UnauthorizedServiceAccess(_, _) => StatusCode::UNAUTHORIZED,
             
             ServiceError::InsufficientEscrowFunds { .. } => StatusCode::PAYMENT_REQUIRED,
             

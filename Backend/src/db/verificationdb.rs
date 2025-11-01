@@ -51,7 +51,7 @@ pub trait VerificationExt {
         user_id: Uuid,
     ) -> Result<Vec<VerificationDocument>, sqlx::Error>;
 
-    async fn get_pending_verifications(
+    async fn get_pending_document_verifications(
         &self,
     ) -> Result<Vec<VerificationDocument>, sqlx::Error>;
 
@@ -215,7 +215,7 @@ impl VerificationExt for DBClient {
         .await
     }
 
-    async fn get_pending_verifications(
+    async fn get_pending_document_verifications(
         &self,
     ) -> Result<Vec<VerificationDocument>, sqlx::Error> {
         sqlx::query_as::<_, VerificationDocument>(

@@ -262,7 +262,7 @@ pub async fn get_pending_verifications(
     }
 
     let pending_verifications = app_state.db_client
-        .get_pending_verifications()
+        .get_pending_document_verifications()
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 

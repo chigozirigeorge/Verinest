@@ -156,25 +156,13 @@ use tower_http::trace::TraceLayer;
 use serde_json::json;
 
 use crate::{
-    handler::{
-        auth::auth_handler, 
-        google_oauth::oauth_handler, 
-        labour::{
-            search_jobs,
-            get_job_details,
-            search_workers,
-            get_worker_details,
-        }, 
-        naira_wallet::{
-            paystack_webhook,
-            flutterwave_webhook
-        }, 
-        users::users_handler,
-        verification::verification_handler,
-        chat::chat_handler,
-    }, 
-    middleware::auth, 
-    AppState
+    AppState, handler::{
+        auth::auth_handler, chat::chat_handler, google_oauth::oauth_handler, labour::{
+            get_job_details, get_worker_details, search_jobs, search_workers
+        }, naira_wallet::{
+            flutterwave_webhook, paystack_webhook
+        }, users::users_handler, vendor::{vendor_handler}, verification::verification_handler
+    }, middleware::auth
 };
 
 // Health check handler
@@ -292,6 +280,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
             users_handler()
                 .layer(middleware::from_fn(auth))
         )
+        .nest("/api/vendor", vendor_handler())
         .nest("/wallet", wallet_routes)
         .nest("/labour", labour_routes)
         .nest("/chat", chat_routes)

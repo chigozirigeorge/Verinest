@@ -162,6 +162,16 @@ pub trait NairaWalletExt {
         user_tier: &UserTier,
         transaction_type: &TransactionType,
     ) -> Result<WalletLimit, sqlx::Error>;
+
+    async fn debit_wallet_with_validation(
+        &self,
+        user_id: Uuid,
+        amount: i64,
+        transaction_type: TransactionType,
+        description: String,
+        reference: String,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<(), Error>;
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1330,6 +1340,44 @@ impl NairaWalletExt for DBClient {
                 .and_then(|bd| bd.to_i64())
                 .unwrap_or(0),
         })
+    }
+
+    // FIX: Add validation in wallet operations
+    async fn debit_wallet_with_validation(
+        &self,
+        user_id: Uuid,
+        amount: i64,
+        transaction_type: TransactionType,
+        description: String,
+        reference: String,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<(), Error> {
+        // Check if user has sufficient balance
+        let wallet = self.get_naira_wallet(user_id).await?
+            .ok_or_else(|| Error::Decode("Wallet not found".into()))?;
+        
+        if wallet.balance < amount {
+            return Err(Error::Decode("Insufficient balance".into()));
+        }
+        
+        // Check for suspicious activity (multiple large transactions)
+        let recent_tx_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM wallet_transactions 
+            WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour' 
+            AND amount > 5000000" // ₦50,000 threshold
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        
+        if recent_tx_count > 5 {
+            return Err(Error::Decode("Suspicious activity detected".into()));
+        }
+        
+        self.debit_wallet(user_id, amount, transaction_type, description, reference, None, metadata).await?;
+
+        Ok(())
+
     }
 }
 
