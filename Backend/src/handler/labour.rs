@@ -498,13 +498,89 @@ pub async fn apply_to_job(
 //     )))
 // }
 
+// pub async fn assign_worker_to_job(
+//     Extension(app_state): Extension<Arc<AppState>>,
+//     Path(job_id): Path<Uuid>,
+//     Extension(auth): Extension<JWTAuthMiddeware>,
+//     Json(body): Json<AssignWorkerDto>,
+// ) -> Result<impl IntoResponse, HttpError> {
+//     let worker_profile_id = body.worker_id; // This is worker_profile.id
+
+//     // Verify job exists and user owns it
+//     let job = app_state.db_client
+//         .get_job_by_id(job_id)
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?
+//         .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+//     if job.employer_id != auth.user.id {
+//         return Err(HttpError::unauthorized("Not authorized to assign workers to this job"));
+//     }
+
+//     // Verify worker exists and has applied to this job
+//     let applications = app_state.db_client
+//         .get_job_applications(job_id)
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+//     let worker_application = applications.iter()
+//         .find(|app| app.worker_id == worker_profile_id)
+//         .ok_or_else(|| HttpError::bad_request("Worker has not applied to this job"))?;
+
+//     // Get the worker profile to get the user_id
+//     let worker_profile = app_state.db_client
+//         .get_worker_profile_by_id(worker_profile_id)
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+//     // Assign worker and create escrow - use worker_profile.user_id for assignment
+//     let result = app_state.labour_service
+//         .assign_worker_to_job(job_id, auth.user.id, worker_profile.user_id)
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+//     // Create contract automatically
+//     let contract = app_state.db_client
+//         .create_job_contract(
+//             job_id,
+//             auth.user.id,
+//             worker_profile.user_id, // Use user_id for contract
+//             worker_application.proposed_rate.to_f64().unwrap_or(0.0),
+//             worker_application.estimated_completion,
+//             format!("Standard contract for job: {}. Agreed rate: {}, Timeline: {} days", 
+//                    job.title, 
+//                    worker_application.proposed_rate.to_f64().unwrap_or(0.0),
+//                    worker_application.estimated_completion),
+//         )
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+//     // Notify worker
+//     let _ = app_state.notification_service.notify_job_assigned_to_worker(worker_profile.user_id, &job).await;
+
+//     Ok(Json(ApiResponse::success(
+//         "Worker assigned successfully and contract created",
+//         AssignWorkerResponse {
+//             job: result.job,
+//             escrow: result.escrow,
+//             contract,
+//         },
+//     )))
+// }
+
+// handlers/labour.rs - FIXED assign_worker_to_job
+
 pub async fn assign_worker_to_job(
     Extension(app_state): Extension<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
     Extension(auth): Extension<JWTAuthMiddeware>,
     Json(body): Json<AssignWorkerDto>,
 ) -> Result<impl IntoResponse, HttpError> {
-    let worker_profile_id = body.worker_id; // This is worker_profile.id
+    // This worker_id from frontend could be either profile_id or user_id
+    // We need to handle both cases gracefully
+    let worker_identifier = body.worker_id;
+
+    println!("🔍 [assign_worker_to_job] Received worker_identifier: {}", worker_identifier);
 
     // Verify job exists and user owns it
     let job = app_state.db_client
@@ -517,7 +593,16 @@ pub async fn assign_worker_to_job(
         return Err(HttpError::unauthorized("Not authorized to assign workers to this job"));
     }
 
-    // Verify worker exists and has applied to this job
+    // Step 1: Resolve the worker_identifier to actual user_id and profile_id
+    let (worker_user_id, worker_profile_id) = resolve_worker_identifiers(
+        &app_state,
+        worker_identifier
+    ).await?;
+
+    println!("✅ [assign_worker_to_job] Resolved IDs - user_id: {}, profile_id: {}", 
+        worker_user_id, worker_profile_id);
+
+    // Step 2: Verify worker has applied to this job using PROFILE_ID
     let applications = app_state.db_client
         .get_job_applications(job_id)
         .await
@@ -525,38 +610,43 @@ pub async fn assign_worker_to_job(
 
     let worker_application = applications.iter()
         .find(|app| app.worker_id == worker_profile_id)
-        .ok_or_else(|| HttpError::bad_request("Worker has not applied to this job"))?;
+        .ok_or_else(|| HttpError::bad_request(
+            "Worker has not applied to this job. Please ask them to apply first."
+        ))?;
 
-    // Get the worker profile to get the user_id
-    let worker_profile = app_state.db_client
-        .get_worker_profile_by_id(worker_profile_id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+    println!("✅ [assign_worker_to_job] Found application: {:?}", worker_application.id);
 
-    // Assign worker and create escrow - use worker_profile.user_id for assignment
+    // Step 3: Assign worker using USER_ID (for foreign key constraint)
     let result = app_state.labour_service
-        .assign_worker_to_job(job_id, auth.user.id, worker_profile.user_id)
+        .assign_worker_to_job(job_id, auth.user.id, worker_user_id)
         .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+        .map_err(|e| {
+            println!("❌ [assign_worker_to_job] Service error: {}", e);
+            HttpError::server_error(e.to_string())
+        })?;
 
-    // Create contract automatically
+    // Step 4: Create contract using USER_ID
     let contract = app_state.db_client
         .create_job_contract(
             job_id,
             auth.user.id,
-            worker_profile.user_id, // Use user_id for contract
+            worker_user_id, // Use USER_ID
             worker_application.proposed_rate.to_f64().unwrap_or(0.0),
             worker_application.estimated_completion,
-            format!("Standard contract for job: {}. Agreed rate: {}, Timeline: {} days", 
-                   job.title, 
-                   worker_application.proposed_rate.to_f64().unwrap_or(0.0),
-                   worker_application.estimated_completion),
+            format!(
+                "Standard contract for job: {}. Agreed rate: {}, Timeline: {} days", 
+                job.title, 
+                worker_application.proposed_rate.to_f64().unwrap_or(0.0),
+                worker_application.estimated_completion
+            ),
         )
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     // Notify worker
-    let _ = app_state.notification_service.notify_job_assigned_to_worker(worker_profile.user_id, &job).await;
+    let _ = app_state.notification_service
+        .notify_job_assigned_to_worker(worker_user_id, &job)
+        .await;
 
     Ok(Json(ApiResponse::success(
         "Worker assigned successfully and contract created",
@@ -565,6 +655,160 @@ pub async fn assign_worker_to_job(
             escrow: result.escrow,
             contract,
         },
+    )))
+}
+
+// Helper function to resolve worker identifier to both user_id and profile_id
+async fn resolve_worker_identifiers(
+    app_state: &Arc<AppState>,
+    worker_identifier: Uuid,
+) -> Result<(Uuid, Uuid), HttpError> {
+    println!("🔍 [resolve_worker_identifiers] Resolving identifier: {}", worker_identifier);
+
+    // Try as user_id first (get_worker_profile expects user_id)
+    match app_state.db_client.get_worker_profile(worker_identifier).await {
+        Ok(profile) => {
+            println!("✅ [resolve_worker_identifiers] Found as user_id");
+            return Ok((profile.user_id, profile.id));
+        }
+        Err(_) => {
+            println!("🔄 [resolve_worker_identifiers] Not found as user_id, trying as profile_id...");
+        }
+    }
+
+    // Try as profile_id
+    match app_state.db_client.get_worker_profile_by_id(worker_identifier).await {
+        Ok(profile) => {
+            println!("✅ [resolve_worker_identifiers] Found as profile_id");
+            Ok((profile.user_id, profile.id))
+        }
+        Err(e) => {
+            println!("❌ [resolve_worker_identifiers] Not found as either ID type");
+            Err(HttpError::not_found(
+                "Worker not found. The identifier provided doesn't match any worker profile."
+            ))
+        }
+    }
+}
+
+// Also update get_job_applications to always include both IDs
+pub async fn get_job_applications(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+    Extension(auth): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    let job = app_state.db_client
+        .get_job_by_id(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+    if job.employer_id != auth.user.id {
+        return Err(HttpError::unauthorized("Not authorized to view applications for this job"));
+    }
+
+    let applications = app_state.db_client
+        .get_job_applications(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    let mut application_responses = Vec::new();
+    
+    for app in applications {
+        println!("🔍 Processing application: {:?}", app);
+
+        // Get worker profile using profile_id
+        let worker_profile_result = app_state.db_client
+            .get_worker_profile_by_id(app.worker_id)
+            .await;
+
+        let (worker_user_id, worker_profile_data) = match worker_profile_result {
+            Ok(profile) => {
+                println!("✅ Found worker profile: user_id={}, profile_id={}", 
+                    profile.user_id, profile.id);
+                (Some(profile.user_id), Some(profile))
+            },
+            Err(e) => {
+                println!("❌ Error fetching worker profile: {}", e);
+                (None, None)
+            }
+        };
+
+        // Get worker user details
+        let worker_user = if let Some(user_id) = worker_user_id {
+            match app_state.db_client
+                .get_user(Some(user_id), None, None, None)
+                .await
+            {
+                Ok(Some(user)) => Some(WorkerUserResponse {
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    username: user.username,
+                    avatar_url: user.avatar_url,
+                    trust_score: user.trust_score,
+                    verified: user.verified,
+                }),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        // Get portfolio and reviews
+        let worker_portfolio = if let Some(profile) = &worker_profile_data {
+            app_state.db_client
+                .get_worker_portfolio(profile.id)
+                .await
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        let worker_reviews = if let Some(profile) = &worker_profile_data {
+            app_state.db_client
+                .get_worker_reviews(profile.user_id)
+                .await
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        let worker_profile_response = worker_profile_data.map(|profile| WorkerProfileApplicationResponse {
+            profile_id: profile.id,
+            category: profile.category.to_str().to_string(),
+            experience_years: profile.experience_years,
+            description: profile.description,
+            hourly_rate: profile.hourly_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
+            daily_rate: profile.daily_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
+            location_state: profile.location_state,
+            location_city: profile.location_city,
+            is_available: profile.is_available.unwrap_or(false),
+            rating: profile.rating.unwrap_or(0.0),
+            completed_jobs: profile.completed_jobs.unwrap_or(0),
+            skills: vec![],
+        });
+
+        application_responses.push(JobApplicationResponse {
+            id: app.id,
+            job_id: app.job_id,
+            worker_id: app.worker_id, // This is profile_id
+            worker_user_id: worker_user_id, // This is user_id - CRITICAL!
+            proposed_rate: app.proposed_rate.to_f64().unwrap_or(0.0),
+            estimated_completion: app.estimated_completion,
+            cover_letter: app.cover_letter,
+            status: app.status.unwrap_or_default(),
+            created_at: app.created_at.unwrap_or_else(Utc::now),
+            worker: worker_user,
+            worker_profile: worker_profile_response,
+            worker_portfolio: worker_portfolio,
+            worker_reviews: worker_reviews,
+        });
+    }
+
+    Ok(Json(ApiResponse::success(
+        "Job applications retrieved successfully",
+        application_responses,
     )))
 }
 
@@ -1558,134 +1802,134 @@ impl<T> ApiResponse<T> {
 // }
 
 
-pub async fn get_job_applications(
-    Extension(app_state): Extension<Arc<AppState>>,
-    Path(job_id): Path<Uuid>,
-    Extension(auth): Extension<JWTAuthMiddeware>,
-) -> Result<impl IntoResponse, HttpError> {
-    // Verify user owns the job
-    let job = app_state.db_client
-        .get_job_by_id(job_id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?
-        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+// pub async fn get_job_applications(
+//     Extension(app_state): Extension<Arc<AppState>>,
+//     Path(job_id): Path<Uuid>,
+//     Extension(auth): Extension<JWTAuthMiddeware>,
+// ) -> Result<impl IntoResponse, HttpError> {
+//     // Verify user owns the job
+//     let job = app_state.db_client
+//         .get_job_by_id(job_id)
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?
+//         .ok_or_else(|| HttpError::not_found("Job not found"))?;
 
-    if job.employer_id != auth.user.id {
-        return Err(HttpError::unauthorized("Not authorized to view applications for this job"));
-    }
+//     if job.employer_id != auth.user.id {
+//         return Err(HttpError::unauthorized("Not authorized to view applications for this job"));
+//     }
 
-    let applications = app_state.db_client
-        .get_job_applications(job_id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+//     let applications = app_state.db_client
+//         .get_job_applications(job_id)
+//         .await
+//         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let mut application_responses = Vec::new();
+//     let mut application_responses = Vec::new();
     
-    for app in applications {
-        println!("🔍 Processing application: {:?}", app);
+//     for app in applications {
+//         println!("🔍 Processing application: {:?}", app);
 
-        // Get worker profile first - this gives us the user_id
-        let worker_profile_result = app_state.db_client
-            .get_worker_profile_by_id(app.worker_id) // This is worker_profile.id
-            .await;
+//         // Get worker profile first - this gives us the user_id
+//         let worker_profile_result = app_state.db_client
+//             .get_worker_profile_by_id(app.worker_id) // This is worker_profile.id
+//             .await;
 
-        let (worker_user_id, worker_profile_data) = match worker_profile_result {
-            Ok(profile) => {
-                println!("✅ Found worker profile: user_id={}, profile_id={}", profile.user_id, profile.id);
-                (Some(profile.user_id), Some(profile))
-            },
-            Err(e) => {
-                println!("❌ Error fetching worker profile for worker_id {}: {}", app.worker_id, e);
-                (None, None)
-            }
-        };
+//         let (worker_user_id, worker_profile_data) = match worker_profile_result {
+//             Ok(profile) => {
+//                 println!("✅ Found worker profile: user_id={}, profile_id={}", profile.user_id, profile.id);
+//                 (Some(profile.user_id), Some(profile))
+//             },
+//             Err(e) => {
+//                 println!("❌ Error fetching worker profile for worker_id {}: {}", app.worker_id, e);
+//                 (None, None)
+//             }
+//         };
 
-        // Get worker user details using the user_id from the profile
-        let worker_user = if let Some(user_id) = worker_user_id {
-            match app_state.db_client
-                .get_user(Some(user_id), None, None, None)
-                .await
-            {
-                Ok(Some(user)) => {
-                    println!("✅ Found worker user: {}", user.email);
-                    Some(WorkerUserResponse {
-                        id: user.id,
-                        name: user.name,
-                        email: user.email,
-                        username: user.username,
-                        avatar_url: user.avatar_url,
-                        trust_score: user.trust_score,
-                        verified: user.verified,
-                    })
-                },
-                Ok(None) => {
-                    println!("⚠️ User not found for user_id: {}", user_id);
-                    None
-                },
-                Err(e) => {
-                    println!("⚠️ Error fetching user for user_id {}: {}", user_id, e);
-                    None
-                },
-            }
-        } else {
-            None
-        };
+//         // Get worker user details using the user_id from the profile
+//         let worker_user = if let Some(user_id) = worker_user_id {
+//             match app_state.db_client
+//                 .get_user(Some(user_id), None, None, None)
+//                 .await
+//             {
+//                 Ok(Some(user)) => {
+//                     println!("✅ Found worker user: {}", user.email);
+//                     Some(WorkerUserResponse {
+//                         id: user.id,
+//                         name: user.name,
+//                         email: user.email,
+//                         username: user.username,
+//                         avatar_url: user.avatar_url,
+//                         trust_score: user.trust_score,
+//                         verified: user.verified,
+//                     })
+//                 },
+//                 Ok(None) => {
+//                     println!("⚠️ User not found for user_id: {}", user_id);
+//                     None
+//                 },
+//                 Err(e) => {
+//                     println!("⚠️ Error fetching user for user_id {}: {}", user_id, e);
+//                     None
+//                 },
+//             }
+//         } else {
+//             None
+//         };
 
-        // Get worker portfolio
-        let worker_portfolio = if let Some(profile) = &worker_profile_data {
-            app_state.db_client
-                .get_worker_portfolio(profile.id)
-                .await
-                .unwrap_or_default()
-        } else {
-            vec![]
-        };
+//         // Get worker portfolio
+//         let worker_portfolio = if let Some(profile) = &worker_profile_data {
+//             app_state.db_client
+//                 .get_worker_portfolio(profile.id)
+//                 .await
+//                 .unwrap_or_default()
+//         } else {
+//             vec![]
+//         };
 
-        // Get worker reviews
-        let worker_reviews = if let Some(profile) = &worker_profile_data {
-            app_state.db_client
-                .get_worker_reviews(profile.user_id) // Use user_id for reviews
-                .await
-                .unwrap_or_default()
-        } else {
-            vec![]
-        };
+//         // Get worker reviews
+//         let worker_reviews = if let Some(profile) = &worker_profile_data {
+//             app_state.db_client
+//                 .get_worker_reviews(profile.user_id) // Use user_id for reviews
+//                 .await
+//                 .unwrap_or_default()
+//         } else {
+//             vec![]
+//         };
 
-        // Convert worker profile data to response format
-        let worker_profile_response = worker_profile_data.map(|profile| WorkerProfileApplicationResponse {
-            profile_id: profile.id,
-            category: profile.category.to_str().to_string(),
-            experience_years: profile.experience_years,
-            description: profile.description,
-            hourly_rate: profile.hourly_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
-            daily_rate: profile.daily_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
-            location_state: profile.location_state,
-            location_city: profile.location_city,
-            is_available: profile.is_available.unwrap_or(false),
-            rating: profile.rating.unwrap_or(0.0),
-            completed_jobs: profile.completed_jobs.unwrap_or(0),
-            skills: vec![],
-        });
+//         // Convert worker profile data to response format
+//         let worker_profile_response = worker_profile_data.map(|profile| WorkerProfileApplicationResponse {
+//             profile_id: profile.id,
+//             category: profile.category.to_str().to_string(),
+//             experience_years: profile.experience_years,
+//             description: profile.description,
+//             hourly_rate: profile.hourly_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
+//             daily_rate: profile.daily_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
+//             location_state: profile.location_state,
+//             location_city: profile.location_city,
+//             is_available: profile.is_available.unwrap_or(false),
+//             rating: profile.rating.unwrap_or(0.0),
+//             completed_jobs: profile.completed_jobs.unwrap_or(0),
+//             skills: vec![],
+//         });
 
-        application_responses.push(JobApplicationResponse {
-            id: app.id,
-            job_id: app.job_id,
-            worker_id: app.worker_id, // This is worker_profile.id
-            worker_user_id: worker_user_id, // The actual user.id for frontend
-            proposed_rate: app.proposed_rate.to_f64().unwrap_or(0.0),
-            estimated_completion: app.estimated_completion,
-            cover_letter: app.cover_letter,
-            status: app.status.unwrap_or_default(),
-            created_at: app.created_at.unwrap_or_else(Utc::now),
-            worker: worker_user,
-            worker_profile: worker_profile_response,
-            worker_portfolio: worker_portfolio,
-            worker_reviews: worker_reviews,
-        });
-    }
+//         application_responses.push(JobApplicationResponse {
+//             id: app.id,
+//             job_id: app.job_id,
+//             worker_id: app.worker_id, // This is worker_profile.id
+//             worker_user_id: worker_user_id, // The actual user.id for frontend
+//             proposed_rate: app.proposed_rate.to_f64().unwrap_or(0.0),
+//             estimated_completion: app.estimated_completion,
+//             cover_letter: app.cover_letter,
+//             status: app.status.unwrap_or_default(),
+//             created_at: app.created_at.unwrap_or_else(Utc::now),
+//             worker: worker_user,
+//             worker_profile: worker_profile_response,
+//             worker_portfolio: worker_portfolio,
+//             worker_reviews: worker_reviews,
+//         });
+//     }
 
-    Ok(Json(ApiResponse::success(
-        "Job applications retrieved successfully",
-        application_responses,
-    )))
-}
+//     Ok(Json(ApiResponse::success(
+//         "Job applications retrieved successfully",
+//         application_responses,
+//     )))
+// }
