@@ -158,10 +158,10 @@ use serde_json::json;
 use crate::{
     AppState, handler::{
         auth::auth_handler, chat::chat_handler, google_oauth::oauth_handler, labour::{
-            get_job_details, get_worker_details, search_jobs, search_workers
+            get_job_details, get_worker_details, get_worker_details_smart, search_jobs, search_workers
         }, naira_wallet::{
             flutterwave_webhook, paystack_webhook
-        }, users::users_handler, vendor::{vendor_handler}, verification::verification_handler
+        }, users::users_handler, vendor::vendor_handler, verification::verification_handler
     }, middleware::auth
 };
 
@@ -211,7 +211,8 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/jobs", get(search_jobs))
         .route("/jobs/:job_id", get(get_job_details))
         .route("/workers/search", get(search_workers))
-        .route("/workers/:worker_id", get(get_worker_details));
+        // .route("/workers/:worker_id", get(get_worker_details))
+        .route("/workers/:worker_id", get(get_worker_details_smart));
 
     // Protected labour routes (require auth - job applications, profiles, etc.)
     let protected_labour_routes = Router::new()
