@@ -1197,7 +1197,7 @@ pub async fn get_worker_details(
     )))
 }
 
-// In labour.rs - Fix the smart worker details endpoint
+// In labour.rs - FIXED smart worker details endpoint
 pub async fn get_worker_details_smart(
     Extension(app_state): Extension<Arc<AppState>>,
     Path(worker_identifier): Path<Uuid>,
@@ -1205,45 +1205,71 @@ pub async fn get_worker_details_smart(
     println!("🔍 [get_worker_details_smart] Smart lookup for: {}", worker_identifier);
     
     let worker_profile;
+    let mut found_as = "unknown";
     
     // First try: Assume it's a user_id and look up worker profile
     match app_state.db_client.get_worker_profile(worker_identifier).await {
         Ok(profile) => {
             println!("✅ [get_worker_details_smart] Found by user_id");
             worker_profile = profile;
+            found_as = "user_id";
         },
         Err(_) => {
             // Second try: Assume it's a profile_id and look up worker profile by ID
             println!("🔄 [get_worker_details_smart] Trying as profile_id...");
-            worker_profile = app_state.db_client
-                .get_worker_profile_by_id(worker_identifier)
-                .await
-                .map_err(|e| {
+            match app_state.db_client.get_worker_profile_by_id(worker_identifier).await {
+                Ok(profile) => {
+                    println!("✅ [get_worker_details_smart] Found by profile_id");
+                    worker_profile = profile;
+                    found_as = "profile_id";
+                },
+                Err(e) => {
                     println!("❌ [get_worker_details_smart] Not found as user_id or profile_id: {}", e);
-                    HttpError::not_found("Worker not found")
-                })?;
-            println!("✅ [get_worker_details_smart] Found by profile_id");
+                    return Err(HttpError::not_found("Worker not found with the provided identifier"));
+                }
+            }
         }
     }
 
-    // Get portfolio using worker_profile.id
-    let portfolio = app_state.db_client
-        .get_worker_portfolio(worker_profile.id)
-        .await
-        .unwrap_or_default();
+    println!("🔍 [get_worker_details_smart] Found worker profile - ID: {}, User ID: {}, Found as: {}", 
+        worker_profile.id, worker_profile.user_id, found_as);
 
-    // Get reviews using worker_profile.user_id
-    let reviews = app_state.db_client
-        .get_worker_reviews(worker_profile.user_id)
-        .await
-        .unwrap_or_default();
+    // Get portfolio using worker_profile.id (this is the CORRECT foreign key)
+    let portfolio = match app_state.db_client.get_worker_portfolio(worker_profile.id).await {
+        Ok(portfolio_items) => {
+            println!("✅ [get_worker_details_smart] Found {} portfolio items", portfolio_items.len());
+            portfolio_items
+        },
+        Err(e) => {
+            println!("⚠️ [get_worker_details_smart] Error fetching portfolio: {}", e);
+            vec![]
+        }
+    };
+
+    // Get reviews using worker_profile.user_id (reviews are linked to user_id, not profile_id)
+    let reviews = match app_state.db_client.get_worker_reviews(worker_profile.user_id).await {
+        Ok(worker_reviews) => {
+            println!("✅ [get_worker_details_smart] Found {} reviews", worker_reviews.len());
+            worker_reviews
+        },
+        Err(e) => {
+            println!("⚠️ [get_worker_details_smart] Error fetching reviews: {}", e);
+            vec![]
+        }
+    };
 
     // Get worker user details using worker_profile.user_id
     let worker_user = app_state.db_client
         .get_user(Some(worker_profile.user_id), None, None, None)
         .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?
-        .ok_or_else(|| HttpError::not_found("Worker user not found"))?;
+        .map_err(|e| {
+            println!("❌ [get_worker_details_smart] Error fetching user: {}", e);
+            HttpError::server_error(e.to_string())
+        })?
+        .ok_or_else(|| {
+            println!("❌ [get_worker_details_smart] User not found for user_id: {}", worker_profile.user_id);
+            HttpError::not_found("Worker user not found")
+        })?;
 
     let filtered_user = FilterUserDto::filter_user(&worker_user);
 
@@ -1254,6 +1280,7 @@ pub async fn get_worker_details_smart(
         reviews,
     };
 
+    println!("✅ [get_worker_details_smart] Successfully built response for worker");
     Ok(Json(ApiResponse::success(
         "Worker details retrieved successfully",
         response,
