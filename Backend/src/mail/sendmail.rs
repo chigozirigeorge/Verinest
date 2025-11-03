@@ -50,13 +50,34 @@
 //     Ok(())
 // }
 
-
-// sendmail.rs
 use std::fs;
 use serde_json::json;
 use reqwest;
 
 pub async fn send_email(
+    to_email: &str,
+    subject: &str,
+    template_path: &str,
+    placeholders: &[(String, String)]
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Clone data for the background task
+    let to_email = to_email.to_string();
+    let subject = subject.to_string();
+    let template_path = template_path.to_string();
+    let placeholders = placeholders.to_vec();
+
+    // Spawn background task
+    tokio::task::spawn(async move {
+        match actual_email_send(&to_email, &subject, &template_path, &placeholders).await {
+            Ok(_) => println!("✓ Email sent in background"),
+            Err(e) => eprintln!("✗ Background email failed: {}", e),
+        }
+    });
+
+    Ok(())
+}
+
+async fn actual_email_send(
     to_email: &str,
     subject: &str,
     template_path: &str,
