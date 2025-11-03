@@ -1,4 +1,4 @@
-// config.rs (Updated)
+// config.rs (Updated with Redis)
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
@@ -6,15 +6,17 @@ pub struct Config {
     pub jwt_secret: String,
     pub jwt_maxage: i64,
     pub port: u16,
-    // Add payment provider configurations
+    // Redis configuration
+    pub redis_url: Option<String>,
+    pub redis_enabled: bool,
+    // Payment provider configurations
     pub paystack_secret_key: String,
     pub flutterwave_secret_key: String,
     pub active_payment_provider: String,
-    // Add email service configurations
+    // Email service configurations
     pub smtp_host: String,
     pub smtp_username: String,
     pub smtp_password: String,
-    // Add other service configurations as needed
 }
 
 impl Config {
@@ -23,6 +25,10 @@ impl Config {
         let jwt_secret = std::env::var("JWT_SECRET_KEY").expect("JWT_SECRET_KEY must be set");
         let jwt_maxage = std::env::var("JWT_MAXAGE").expect("JWT_MAXAGE must be set");
         let app_url = std::env::var("APP_URL").expect("APP_URL must be set");
+        
+        // Redis configuration (optional)
+        let redis_url = std::env::var("REDIS_URL").ok();
+        let redis_enabled = redis_url.is_some();
         
         // Payment provider configurations (with defaults)
         let paystack_secret_key = std::env::var("PAYSTACK_SECRET_KEY")
@@ -40,12 +46,20 @@ impl Config {
         let smtp_password = std::env::var("SMTP_PASSWORD")
             .unwrap_or_else(|_| "".to_string());
 
+        if redis_enabled {
+            println!("🚀 Redis caching is ENABLED");
+        } else {
+            println!("⚠️  Redis caching is DISABLED (set REDIS_URL to enable)");
+        }
+
         Config {
             database_url,
             app_url,
             jwt_secret,
             jwt_maxage: jwt_maxage.parse::<i64>().unwrap(),
             port: 8000,
+            redis_url,
+            redis_enabled,
             paystack_secret_key,
             flutterwave_secret_key,
             active_payment_provider,

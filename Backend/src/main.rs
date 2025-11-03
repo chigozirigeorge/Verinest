@@ -1,4 +1,4 @@
-// main.rs (Updated with Service Integration)
+// main.rs (Updated with Redis Integration)
 mod models;
 mod service;
 mod config;
@@ -23,7 +23,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::filter::LevelFilter;
 use crate::service::subscriptions::start_vendor_expiry_checker;
 
-// Import the services we created
+// Import the services
 use service::{
     labour_service::LabourService,
     escrow_service::EscrowService,
@@ -39,7 +39,7 @@ use service::{
 pub struct AppState {
     pub env: Config,
     pub db_client: Arc<DBClient>,
-    // Add all the services
+    // Services
     pub labour_service: Arc<LabourService>,
     pub escrow_service: Arc<EscrowService>,
     pub dispute_service: Arc<DisputeService>,
@@ -98,64 +98,6 @@ impl AppState {
     }
 }
 
-// #[tokio::main]
-// async fn main() {
-//     tracing_subscriber::fmt()
-//     .with_max_level(LevelFilter::DEBUG)
-//     .init();
-
-//     dotenv().ok();
-
-//     let config = Config::init();
-
-//     let pool = match PgPoolOptions::new()
-//             .max_connections(10)
-//             .connect(&config.database_url)
-//             .await
-//     {
-//         Ok(pool) => {
-//             println!("✅Connection to the database is successful!");
-//             pool
-//         }
-//         Err(err) => {
-//             println!("🔥 Failed to connect to the database: {:?}", err);
-//             std::process::exit(1);
-//         }
-//     };
-
-//     let allowed_origins = vec![
-//     "https://verinestorg.vercel.app".parse::<HeaderValue>().unwrap(),
-//     "https://verinest.up.railway.app".parse::<HeaderValue>().unwrap(),
-//     "http://localhost:5173".parse::<HeaderValue>().unwrap(),
-//     "http://localhost:8000".parse::<HeaderValue>().unwrap(),
-// ];
-
-//     let cors = CorsLayer::new()
-//         .allow_origin(AllowOrigin::list(allowed_origins))
-//         .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
-//         .allow_credentials(true)
-//         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH]);
-
-//     let db_client = DBClient::new(pool);
-//     let app_state = AppState::new(db_client, config.clone());
-
-//     let app = create_router(Arc::new(app_state)).layer(cors);
-
-//     println!(
-//         "🚀 Server is running on http://localhost:{}",
-//         config.port
-//     );
-
-//     // tokio::spawn(start_vendor_expiry_checker(app_state.clone()));
-
-//     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", &config.port))
-//     .await
-//     .unwrap();
-
-//     axum::serve(listener, app).await.unwrap();
-// }
-
-// main.rs - Update with background jobs
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -166,6 +108,7 @@ async fn main() {
 
     let config = Config::init();
 
+    // Connect to PostgreSQL
     let pool = match PgPoolOptions::new()
             .max_connections(10)
             .connect(&config.database_url)
@@ -181,6 +124,27 @@ async fn main() {
         }
     };
 
+    // Initialize DBClient with optional Redis
+    let db_client = if let Some(ref redis_url) = config.redis_url {
+        match DBClient::with_redis(pool.clone(), redis_url).await {
+            Ok(client) => {
+                if client.is_redis_available() {
+                    println!("✅ Redis caching is ACTIVE - Performance boosted! 🚀");
+                } else {
+                    println!("⚠️  Redis connection failed - Running without cache");
+                }
+                client
+            }
+            Err(e) => {
+                println!("⚠️  Redis initialization error: {} - Running without cache", e);
+                DBClient::new(pool)
+            }
+        }
+    } else {
+        println!("ℹ️  Redis not configured - Running without cache (set REDIS_URL to enable)");
+        DBClient::new(pool)
+    };
+
     let allowed_origins = vec![
         "https://verinestorg.vercel.app".parse::<HeaderValue>().unwrap(),
         "https://verinest.up.railway.app".parse::<HeaderValue>().unwrap(),
@@ -194,7 +158,6 @@ async fn main() {
         .allow_credentials(true)
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH]);
 
-    let db_client = DBClient::new(pool);
     let app_state = Arc::new(AppState::new(db_client, config.clone()));
 
     let app = create_router(app_state.clone()).layer(cors);
@@ -203,6 +166,7 @@ async fn main() {
         "🚀 Server is running on http://localhost:{}",
         config.port
     );
+    println!("📊 Cache status: {}", app_state.db_client.cache_status());
 
     // Start background jobs
     let app_state_clone = app_state.clone();
@@ -215,7 +179,7 @@ async fn main() {
         service::background_jobs::start_service_expiry_job(app_state_clone).await;
     });
 
-    // Start vendor subscription expiry checker (already exists)
+    // Start vendor subscription expiry checker
     tokio::spawn(start_vendor_expiry_checker(app_state.clone()));
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", &config.port))

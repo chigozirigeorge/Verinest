@@ -10,3 +10,4 @@ pub mod notification_handler;
 pub mod chat;
 pub mod support_handler;
 pub mod vendor;
+pub mod cache_handler;

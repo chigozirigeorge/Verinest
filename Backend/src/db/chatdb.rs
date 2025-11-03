@@ -2,12 +2,16 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 use sqlx::Error;
+use redis::AsyncCommands;
 use super::db::DBClient;
 use crate::models::chatnodels::*;
 
+const CHAT_CACHE_TTL: usize = 3600; // 1 hour
+const MESSAGE_CACHE_TTL: usize = 1800; // 30 minutes
+const UNREAD_CACHE_TTL: usize = 300; // 5 minutes
+
 #[async_trait]
 pub trait ChatExt {
-    // Chat management
     async fn create_or_get_chat(
         &self,
         user_one_id: Uuid,
@@ -33,7 +37,6 @@ pub trait ChatExt {
         status: ChatStatus,
     ) -> Result<Chat, Error>;
     
-    // Message management
     async fn send_message(
         &self,
         chat_id: Uuid,
@@ -61,7 +64,6 @@ pub trait ChatExt {
         user_id: Uuid,
     ) -> Result<i64, Error>;
     
-    // Contract proposal from chat
     async fn create_contract_proposal(
         &self,
         chat_id: Uuid,
@@ -113,11 +115,21 @@ impl ChatExt for DBClient {
         .await?;
         
         if let Some(chat) = existing {
+            // Cache the chat
+            if let Some(redis_client) = &self.redis_client {
+                let cache_key = format!("chat:{}", chat.id);
+                let chat_json = serde_json::to_string(&chat).unwrap_or_default();
+                let _: Result<(), redis::RedisError> = redis_client
+                    .lock()
+                    .await
+                    .set_ex(&cache_key, chat_json, CHAT_CACHE_TTL)
+                    .await;
+            }
             return Ok(chat);
         }
         
         // Create new chat
-        sqlx::query_as::<_, Chat>(
+        let chat = sqlx::query_as::<_, Chat>(
             r#"
             INSERT INTO chats (participant_one_id, participant_two_id, job_id)
             VALUES ($1, $2, $3)
@@ -129,7 +141,29 @@ impl ChatExt for DBClient {
         .bind(user_two_id)
         .bind(job_id)
         .fetch_one(&self.pool)
-        .await
+        .await?;
+
+        // Cache the new chat
+        if let Some(redis_client) = &self.redis_client {
+            let cache_key = format!("chat:{}", chat.id);
+            let chat_json = serde_json::to_string(&chat).unwrap_or_default();
+            let _: Result<(), redis::RedisError> = redis_client
+                .lock()
+                .await
+                .set_ex(&cache_key, chat_json, CHAT_CACHE_TTL)
+                .await;
+                
+            // Invalidate user chats cache
+            let user_chats_key1 = format!("user_chats:{}:*", user_one_id);
+            let user_chats_key2 = format!("user_chats:{}:*", user_two_id);
+            let _: Result<(), redis::RedisError> = redis_client
+                .lock()
+                .await
+                .del(&[user_chats_key1, user_chats_key2])
+                .await;
+        }
+
+        Ok(chat)
     }
     
     async fn get_user_chats(
@@ -138,7 +172,25 @@ impl ChatExt for DBClient {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Chat>, Error> {
-        sqlx::query_as::<_, Chat>(
+        let cache_key = format!("user_chats:{}:{}:{}", user_id, limit, offset);
+        
+        // Try cache first
+        if let Some(redis_client) = &self.redis_client {
+            let cached: Result<String, redis::RedisError> = redis_client
+                .lock()
+                .await
+                .get(&cache_key)
+                .await;
+                
+            if let Ok(cached_data) = cached {
+                if let Ok(chats) = serde_json::from_str::<Vec<Chat>>(&cached_data) {
+                    return Ok(chats);
+                }
+            }
+        }
+        
+        // Fetch from database
+        let chats = sqlx::query_as::<_, Chat>(
             r#"
             SELECT id, participant_one_id, participant_two_id, job_id, status,
                    last_message_at, created_at
@@ -153,14 +205,45 @@ impl ChatExt for DBClient {
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
-        .await
+        .await?;
+        
+        // Cache the result
+        if let Some(redis_client) = &self.redis_client {
+            if let Ok(chats_json) = serde_json::to_string(&chats) {
+                let _: Result<(), redis::RedisError> = redis_client
+                    .lock()
+                    .await
+                    .set_ex(&cache_key, chats_json, CHAT_CACHE_TTL)
+                    .await;
+            }
+        }
+        
+        Ok(chats)
     }
     
     async fn get_chat_by_id(
         &self,
         chat_id: Uuid,
     ) -> Result<Option<Chat>, Error> {
-        sqlx::query_as::<_, Chat>(
+        let cache_key = format!("chat:{}", chat_id);
+        
+        // Try cache first
+        if let Some(redis_client) = &self.redis_client {
+            let cached: Result<String, redis::RedisError> = redis_client
+                .lock()
+                .await
+                .get(&cache_key)
+                .await;
+                
+            if let Ok(cached_data) = cached {
+                if let Ok(chat) = serde_json::from_str::<Chat>(&cached_data) {
+                    return Ok(Some(chat));
+                }
+            }
+        }
+        
+        // Fetch from database
+        let chat = sqlx::query_as::<_, Chat>(
             r#"
             SELECT id, participant_one_id, participant_two_id, job_id, status,
                    last_message_at, created_at
@@ -170,7 +253,22 @@ impl ChatExt for DBClient {
         )
         .bind(chat_id)
         .fetch_optional(&self.pool)
-        .await
+        .await?;
+        
+        // Cache if found
+        if let Some(ref chat_data) = chat {
+            if let Some(redis_client) = &self.redis_client {
+                if let Ok(chat_json) = serde_json::to_string(chat_data) {
+                    let _: Result<(), redis::RedisError> = redis_client
+                        .lock()
+                        .await
+                        .set_ex(&cache_key, chat_json, CHAT_CACHE_TTL)
+                        .await;
+                }
+            }
+        }
+        
+        Ok(chat)
     }
     
     async fn update_chat_status(
@@ -178,7 +276,7 @@ impl ChatExt for DBClient {
         chat_id: Uuid,
         status: ChatStatus,
     ) -> Result<Chat, Error> {
-        sqlx::query_as::<_, Chat>(
+        let chat = sqlx::query_as::<_, Chat>(
             r#"
             UPDATE chats
             SET status = $2
@@ -190,7 +288,28 @@ impl ChatExt for DBClient {
         .bind(chat_id)
         .bind(status)
         .fetch_one(&self.pool)
-        .await
+        .await?;
+        
+        // Invalidate cache
+        if let Some(redis_client) = &self.redis_client {
+            let cache_key = format!("chat:{}", chat_id);
+            let _: Result<(), redis::RedisError> = redis_client
+                .lock()
+                .await
+                .del(&cache_key)
+                .await;
+                
+            // Invalidate user chats cache for both participants
+            let user_chats_key1 = format!("user_chats:{}:*", chat.participant_one_id);
+            let user_chats_key2 = format!("user_chats:{}:*", chat.participant_two_id);
+            let _: Result<(), redis::RedisError> = redis_client
+                .lock()
+                .await
+                .del(&[user_chats_key1, user_chats_key2])
+                .await;
+        }
+        
+        Ok(chat)
     }
     
     async fn send_message(
@@ -233,6 +352,36 @@ impl ChatExt for DBClient {
         .await?;
         
         tx.commit().await?;
+        
+        // Invalidate relevant caches
+        if let Some(redis_client) = &self.redis_client {
+            let mut conn = redis_client.lock().await;
+            
+            // Invalidate chat cache
+            let chat_key = format!("chat:{}", chat_id);
+            let _: Result<(), redis::RedisError> = conn.del(&chat_key).await;
+            
+            // Invalidate messages cache for this chat
+            let messages_pattern = format!("messages:{}:*", chat_id);
+            let _: Result<(), redis::RedisError> = conn.del(&messages_pattern).await;
+            
+            // Get chat to invalidate user chats
+            if let Ok(Some(chat)) = self.get_chat_by_id(chat_id).await {
+                let user1_pattern = format!("user_chats:{}:*", chat.participant_one_id);
+                let user2_pattern = format!("user_chats:{}:*", chat.participant_two_id);
+                let _: Result<(), redis::RedisError> = conn.del(&[user1_pattern, user2_pattern]).await;
+                
+                // Invalidate unread count for receiver
+                let receiver_id = if chat.participant_one_id == sender_id {
+                    chat.participant_two_id
+                } else {
+                    chat.participant_one_id
+                };
+                let unread_key = format!("unread_count:{}", receiver_id);
+                let _: Result<(), redis::RedisError> = conn.del(&unread_key).await;
+            }
+        }
+        
         Ok(message)
     }
     
@@ -242,7 +391,25 @@ impl ChatExt for DBClient {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Message>, Error> {
-        sqlx::query_as::<_, Message>(
+        let cache_key = format!("messages:{}:{}:{}", chat_id, limit, offset);
+        
+        // Try cache first
+        if let Some(redis_client) = &self.redis_client {
+            let cached: Result<String, redis::RedisError> = redis_client
+                .lock()
+                .await
+                .get(&cache_key)
+                .await;
+                
+            if let Ok(cached_data) = cached {
+                if let Ok(messages) = serde_json::from_str::<Vec<Message>>(&cached_data) {
+                    return Ok(messages);
+                }
+            }
+        }
+        
+        // Fetch from database
+        let messages = sqlx::query_as::<_, Message>(
             r#"
             SELECT id, chat_id, sender_id, message_type, content, metadata,
                    is_read, read_at, created_at
@@ -256,7 +423,20 @@ impl ChatExt for DBClient {
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
-        .await
+        .await?;
+        
+        // Cache the result
+        if let Some(redis_client) = &self.redis_client {
+            if let Ok(messages_json) = serde_json::to_string(&messages) {
+                let _: Result<(), redis::RedisError> = redis_client
+                    .lock()
+                    .await
+                    .set_ex(&cache_key, messages_json, MESSAGE_CACHE_TTL)
+                    .await;
+            }
+        }
+        
+        Ok(messages)
     }
     
     async fn mark_messages_as_read(
@@ -278,6 +458,19 @@ impl ChatExt for DBClient {
         .execute(&self.pool)
         .await?;
         
+        // Invalidate relevant caches
+        if let Some(redis_client) = &self.redis_client {
+            let mut conn = redis_client.lock().await;
+            
+            // Invalidate messages cache
+            let messages_pattern = format!("messages:{}:*", chat_id);
+            let _: Result<(), redis::RedisError> = conn.del(&messages_pattern).await;
+            
+            // Invalidate unread count
+            let unread_key = format!("unread_count:{}", user_id);
+            let _: Result<(), redis::RedisError> = conn.del(&unread_key).await;
+        }
+        
         Ok(())
     }
     
@@ -285,6 +478,22 @@ impl ChatExt for DBClient {
         &self,
         user_id: Uuid,
     ) -> Result<i64, Error> {
+        let cache_key = format!("unread_count:{}", user_id);
+        
+        // Try cache first
+        if let Some(redis_client) = &self.redis_client {
+            let cached: Result<i64, redis::RedisError> = redis_client
+                .lock()
+                .await
+                .get(&cache_key)
+                .await;
+                
+            if let Ok(count) = cached {
+                return Ok(count);
+            }
+        }
+        
+        // Fetch from database
         let result = sqlx::query_scalar::<_, i64>(
             r#"
             SELECT COUNT(*)
@@ -298,6 +507,15 @@ impl ChatExt for DBClient {
         .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
+        
+        // Cache the result
+        if let Some(redis_client) = &self.redis_client {
+            let _: Result<(), redis::RedisError> = redis_client
+                .lock()
+                .await
+                .set_ex(&cache_key, result, UNREAD_CACHE_TTL)
+                .await;
+        }
         
         Ok(result)
     }
@@ -314,7 +532,7 @@ impl ChatExt for DBClient {
         agreed_timeline: i32,
         terms: String,
     ) -> Result<ContractProposal, Error> {
-        sqlx::query_as::<_, ContractProposal>(
+        let proposal = sqlx::query_as::<_, ContractProposal>(
             r#"
             INSERT INTO contract_proposals 
             (chat_id, message_id, job_id, proposed_by, worker_id, employer_id, 
@@ -335,7 +553,21 @@ impl ChatExt for DBClient {
         .bind(agreed_timeline)
         .bind(terms)
         .fetch_one(&self.pool)
-        .await
+        .await?;
+        
+        // Cache the proposal
+        if let Some(redis_client) = &self.redis_client {
+            let cache_key = format!("contract_proposal:message:{}", message_id);
+            if let Ok(proposal_json) = serde_json::to_string(&proposal) {
+                let _: Result<(), redis::RedisError> = redis_client
+                    .lock()
+                    .await
+                    .set_ex(&cache_key, proposal_json, CHAT_CACHE_TTL)
+                    .await;
+            }
+        }
+        
+        Ok(proposal)
     }
     
     async fn respond_to_contract_proposal(
@@ -343,7 +575,7 @@ impl ChatExt for DBClient {
         proposal_id: Uuid,
         status: String,
     ) -> Result<ContractProposal, Error> {
-        sqlx::query_as::<_, ContractProposal>(
+        let proposal = sqlx::query_as::<_, ContractProposal>(
             r#"
             UPDATE contract_proposals
             SET status = $2, responded_at = NOW()
@@ -356,14 +588,44 @@ impl ChatExt for DBClient {
         .bind(proposal_id)
         .bind(status)
         .fetch_one(&self.pool)
-        .await
+        .await?;
+        
+        // Invalidate proposal cache
+        if let Some(redis_client) = &self.redis_client {
+            let cache_key = format!("contract_proposal:message:{}", proposal.message_id);
+            let _: Result<(), redis::RedisError> = redis_client
+                .lock()
+                .await
+                .del(&cache_key)
+                .await;
+        }
+        
+        Ok(proposal)
     }
     
     async fn get_contract_proposal_by_message(
         &self,
         message_id: Uuid,
     ) -> Result<Option<ContractProposal>, Error> {
-        sqlx::query_as::<_, ContractProposal>(
+        let cache_key = format!("contract_proposal:message:{}", message_id);
+        
+        // Try cache first
+        if let Some(redis_client) = &self.redis_client {
+            let cached: Result<String, redis::RedisError> = redis_client
+                .lock()
+                .await
+                .get(&cache_key)
+                .await;
+                
+            if let Ok(cached_data) = cached {
+                if let Ok(proposal) = serde_json::from_str::<ContractProposal>(&cached_data) {
+                    return Ok(Some(proposal));
+                }
+            }
+        }
+        
+        // Fetch from database
+        let proposal = sqlx::query_as::<_, ContractProposal>(
             r#"
             SELECT id, chat_id, message_id, job_id, proposed_by, worker_id,
                    employer_id, agreed_rate, agreed_timeline, terms, status,
@@ -374,6 +636,21 @@ impl ChatExt for DBClient {
         )
         .bind(message_id)
         .fetch_optional(&self.pool)
-        .await
+        .await?;
+        
+        // Cache if found
+        if let Some(ref proposal_data) = proposal {
+            if let Some(redis_client) = &self.redis_client {
+                if let Ok(proposal_json) = serde_json::to_string(proposal_data) {
+                    let _: Result<(), redis::RedisError> = redis_client
+                        .lock()
+                        .await
+                        .set_ex(&cache_key, proposal_json, CHAT_CACHE_TTL)
+                        .await;
+                }
+            }
+        }
+        
+        Ok(proposal)
     }
 }
