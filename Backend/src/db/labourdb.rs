@@ -755,106 +755,122 @@ async fn get_jobs_by_location_and_category(
         .await
     }
 
-// In labourdb.rs - PROFESSIONAL VERSION WITH CONTRACT CHECKING
-async fn assign_worker_to_job(
-    &self,
-    job_id: Uuid,
-    employer_user_id: Uuid,
-    worker_profile_id: Uuid,
-) -> Result<JobAssignmentResult, SqlxError> {
-    let mut tx = self.pool.begin().await?;
+    async fn assign_worker_to_job(
+        &self,
+        job_id: Uuid,
+        employer_user_id: Uuid,
+        worker_profile_id: Uuid,
+    ) -> Result<JobAssignmentResult, SqlxError> {
+        let mut tx = self.pool.begin().await?;
 
-    // 1. Check if job is still open and get current state
-    let job = sqlx::query_as::<_, Job>(
-        r#"
-        SELECT * FROM jobs 
-        WHERE id = $1 AND status = 'open'::job_status
-        FOR UPDATE
-        "#
-    )
-    .bind(job_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| sqlx::Error::RowNotFound)?;
+        println!("🔍 [assign_worker_to_job] Starting assignment - Job: {}, Worker Profile: {}", job_id, worker_profile_id);
 
-    // 2. Check if contract already exists for this job
-    let existing_contract = sqlx::query_as::<_, JobContract>(
-        r#"
-        SELECT * FROM job_contracts WHERE job_id = $1
-        "#
-    )
-    .bind(job_id)
-    .fetch_optional(&mut *tx)
-    .await?;
+        // 1. Check if job is still open and get current state
+        let job = sqlx::query_as::<_, Job>(
+            r#"
+            SELECT * FROM jobs 
+            WHERE id = $1 AND status = 'open'::job_status
+            FOR UPDATE
+            "#
+        )
+        .bind(job_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| {
+            println!("❌ [assign_worker_to_job] Job not found or not open: {}", job_id);
+            SqlxError::RowNotFound
+        })?;
 
-    if existing_contract.is_some() {
-        return return Err(SqlxError::Protocol(
-        "Contract already exists for job" 
-    .into()));
+        println!("✅ [assign_worker_to_job] Job found and is open");
+
+        // 2. Check if contract already exists for this job
+        let existing_contract = sqlx::query_as::<_, JobContract>(
+            r#"
+            SELECT * FROM job_contracts WHERE job_id = $1
+            "#
+        )
+        .bind(job_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if existing_contract.is_some() {
+            println!("❌ [assign_worker_to_job] Contract already exists for job: {}", job_id);
+            return Err(SqlxError::Protocol("contract_already_exists".into()));
+        }
+
+        println!("✅ [assign_worker_to_job] No existing contract found");
+
+        // 3. Get worker profile
+        let worker_profile = self.get_worker_profile_by_id(worker_profile_id).await?;
+        let worker_user_id = worker_profile.user_id;
+
+        println!("✅ [assign_worker_to_job] Worker profile found - User ID: {}", worker_user_id);
+
+        // 4. Update job with assigned worker
+        let updated_job = sqlx::query_as::<_, Job>(
+            r#"
+            UPDATE jobs 
+            SET assigned_worker_id = $2, status = 'in_progress'::job_status, updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, employer_id, assigned_worker_id, category, title, description, 
+            location_state, location_city, location_address, budget, estimated_duration_days, 
+            status, payment_status, escrow_amount, platform_fee, partial_payment_allowed, 
+            partial_payment_percentage, created_at, updated_at, deadline
+            "#
+        )
+        .bind(job_id)
+        .bind(worker_profile_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        println!("✅ [assign_worker_to_job] Job updated successfully");
+
+        // 5. Create contract
+        let contract = self.create_job_contract(
+            job_id,
+            employer_user_id,
+            worker_user_id,
+            job.budget.to_f64().unwrap_or(0.0),
+            job.estimated_duration_days,
+            format!(
+                "Standard work agreement for job: {}. Worker: {}, Employer: {}",
+                job.title,
+                worker_profile_id,
+                employer_user_id
+            ),
+        ).await?;
+
+        println!("✅ [assign_worker_to_job] Contract created successfully");
+
+        // 6. Create escrow
+        let escrow = sqlx::query_as::<_, EscrowTransaction>(
+            r#"
+            INSERT INTO escrow_transactions 
+            (job_id, employer_id, worker_id, amount, platform_fee, status)
+            VALUES ($1, $2, $3, $4, $5, 'escrowed'::payment_status)
+            RETURNING id, job_id, employer_id, worker_id, amount, platform_fee,
+            status, transaction_hash, created_at, released_at
+            "#
+        )
+        .bind(job_id)
+        .bind(updated_job.employer_id)
+        .bind(worker_user_id)
+        .bind(updated_job.escrow_amount.clone())
+        .bind(updated_job.platform_fee.clone())
+        .fetch_one(&mut *tx)
+        .await?;
+
+        println!("✅ [assign_worker_to_job] Escrow created successfully");
+
+        tx.commit().await?;
+        println!("✅ [assign_worker_to_job] Transaction committed successfully");
+        
+        Ok(JobAssignmentResult {
+            job: updated_job,
+            contract,
+            escrow,
+        })
     }
-
-    // 3. Get worker profile
-    let worker_profile = self.get_worker_profile_by_id(worker_profile_id).await?;
-    let worker_user_id = worker_profile.user_id;
-
-    // 4. Update job with assigned worker
-    let updated_job = sqlx::query_as::<_, Job>(
-        r#"
-        UPDATE jobs 
-        SET assigned_worker_id = $2, status = 'in_progress'::job_status, updated_at = NOW()
-        WHERE id = $1
-        RETURNING id, employer_id, assigned_worker_id, category, title, description, 
-        location_state, location_city, location_address, budget, estimated_duration_days, 
-        status, payment_status, escrow_amount, platform_fee, partial_payment_allowed, 
-        partial_payment_percentage, created_at, updated_at, deadline
-        "#
-    )
-    .bind(job_id)
-    .bind(worker_profile_id)
-    .fetch_one(&mut *tx)
-    .await?;
-
-    // 5. Create contract (only if it doesn't exist)
-    let contract = self.create_job_contract(
-        job_id,
-        employer_user_id,
-        worker_user_id,
-        job.budget.to_f64().unwrap_or(0.0),
-        job.estimated_duration_days,
-        format!(
-            "Standard work agreement for job: {}. Worker: {}, Employer: {}",
-            job.title,
-            worker_profile_id,
-            employer_user_id
-        ),
-    ).await?;
-
-    // 6. Create escrow
-    let escrow = sqlx::query_as::<_, EscrowTransaction>(
-        r#"
-        INSERT INTO escrow_transactions 
-        (job_id, employer_id, worker_id, amount, platform_fee, status)
-        VALUES ($1, $2, $3, $4, $5, 'escrowed'::payment_status)
-        RETURNING id, job_id, employer_id, worker_id, amount, platform_fee,
-        status, transaction_hash, created_at, released_at
-        "#
-    )
-    .bind(job_id)
-    .bind(updated_job.employer_id)
-    .bind(worker_user_id)
-    .bind(updated_job.escrow_amount.clone())
-    .bind(updated_job.platform_fee.clone())
-    .fetch_one(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-    
-    Ok(JobAssignmentResult {
-        job: updated_job,
-        contract,
-        escrow,
-    })
-}
 
     async fn create_job_application(
         &self,

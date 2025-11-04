@@ -93,6 +93,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/jobs/:job_id/applications", post(crate::handler::labour::apply_to_job))
         .route("/jobs/:job_id/applications", get(crate::handler::labour::get_job_applications))
         .route("/jobs/:job_id/assign", put(crate::handler::labour::assign_worker_to_job))
+        .route("/jobs/:job_id/contract", get(crate::handler::labour::get_job_contract)) 
         .route("/jobs/:job_id/contract", post(crate::handler::labour::create_job_contract))
         .route("/jobs/:job_id/progress", post(crate::handler::labour::submit_job_progress))
         .route("/jobs/:job_id/progress", get(crate::handler::labour::get_job_progress))
