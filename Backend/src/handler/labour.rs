@@ -15,8 +15,8 @@ use crate::{
         userdb::UserExt, verificationdb::VerificationExt,
     }, dtos::{labordtos::*, userdtos::FilterUserDto}, error::HttpError, 
         mail::mails, middleware::JWTAuthMiddeware, models::{labourmodel::*, 
-        usermodel::User, verificationmodels::OtpPurpose}, service::{
-    }, AppState
+        usermodel::User, verificationmodels::OtpPurpose}, 
+        AppState
 };
 
 pub fn labour_handler() -> Router {
@@ -59,6 +59,7 @@ pub fn labour_handler() -> Router {
         
         // Contract management
         .route("/contracts/:contract_id/sign", put(sign_contract))
+        .route("/jobs/:job_id/contract", get(get_job_contract))
         
         // Application management
         .route("/applications/:application_id/status", put(update_application_status))
@@ -472,6 +473,7 @@ pub async fn apply_to_job(
 //     )))
 //
 
+// In labour.rs - IMPROVED ASSIGNMENT HANDLER
 pub async fn assign_worker_to_job(
     Extension(app_state): Extension<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -480,85 +482,110 @@ pub async fn assign_worker_to_job(
 ) -> Result<impl IntoResponse, HttpError> {
     let worker_profile_id = body.worker_id;
 
-    println!("🔍 [assign_worker_to_job] Assigning worker profile: {} to job: {}", worker_profile_id, job_id);
+    println!("🔍 [assign_worker_to_job] Starting assignment - Job: {}, Worker Profile: {}", 
+        job_id, worker_profile_id);
 
-    // Verify job exists and user owns it
+    // 1. Verify job exists and user owns it
     let job = app_state.db_client
         .get_job_by_id(job_id)
         .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?
-        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+        .map_err(|e| {
+            println!("❌ [assign_worker_to_job] Job not found: {}", e);
+            HttpError::not_found("Job not found")
+        })?
+        .ok_or_else(|| {
+            println!("❌ [assign_worker_to_job] Job not found");
+            HttpError::not_found("Job not found")
+        })?;
 
     if job.employer_id != auth.user.id {
+        println!("❌ [assign_worker_to_job] Unauthorized access - Employer: {}, Job Owner: {}", 
+            auth.user.id, job.employer_id);
         return Err(HttpError::unauthorized("Not authorized to assign workers to this job"));
     }
 
-    // Step 1: Get worker profile to get the user_id
+    // 2. Check if job is still open
+    if job.status != Some(JobStatus::Open) {
+        println!("❌ [assign_worker_to_job] Job not open - Status: {:?}", job.status);
+        return Err(HttpError::bad_request("Job is no longer open for assignment"));
+    }
+
+    // 3. Verify worker exists and get profile
     let worker_profile = app_state.db_client
         .get_worker_profile_by_id(worker_profile_id)
         .await
         .map_err(|e| {
-            println!("❌ [assign_worker_to_job] Error fetching worker profile: {}", e);
-            HttpError::server_error(e.to_string())
+            println!("❌ [assign_worker_to_job] Worker profile not found: {}", e);
+            HttpError::not_found("Worker profile not found")
         })?;
 
-    let worker_user_id = worker_profile.user_id;
-    println!("✅ [assign_worker_to_job] Found worker user_id: {}", worker_user_id);
+    println!("✅ [assign_worker_to_job] Found worker profile - User ID: {}", worker_profile.user_id);
 
-    // Step 2: Verify worker has applied to this job
+    // 4. Verify worker has applied to this job
     let applications = app_state.db_client
         .get_job_applications(job_id)
         .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+        .map_err(|e| {
+            println!("❌ [assign_worker_to_job] Error fetching applications: {}", e);
+            HttpError::server_error("Failed to fetch job applications")
+        })?;
 
     let worker_application = applications.iter()
         .find(|app| app.worker_id == worker_profile_id)
-        .ok_or_else(|| HttpError::bad_request(
-            "Worker has not applied to this job. Please ask them to apply first."
-        ))?;
-
-    println!("✅ [assign_worker_to_job] Found application from worker");
-
-    // Step 3: Assign worker using USER_ID (critical for foreign key)
-    let result = app_state.labour_service
-        .assign_worker_to_job(job_id, auth.user.id, worker_user_id)
-        .await
-        .map_err(|e| {
-            println!("❌ [assign_worker_to_job] Service error: {}", e);
-            HttpError::server_error(e.to_string())
+        .ok_or_else(|| {
+            println!("❌ [assign_worker_to_job] Worker has not applied - Profile ID: {}", worker_profile_id);
+            HttpError::bad_request("Worker has not applied to this job")
         })?;
 
-    // Step 4: Create contract using USER_ID
-    let contract = app_state.db_client
-        .create_job_contract(
-            job_id,
-            auth.user.id,
-            worker_user_id, // Use USER_ID for contract
-            worker_application.proposed_rate.to_f64().unwrap_or(0.0),
-            worker_application.estimated_completion,
-            format!(
-                "Standard contract for job: {}. Agreed rate: {}, Timeline: {} days", 
-                job.title, 
-                worker_application.proposed_rate.to_f64().unwrap_or(0.0),
-                worker_application.estimated_completion
-            ),
-        )
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+    println!("✅ [assign_worker_to_job] Found worker application");
 
-    // Notify worker
-    let _ = app_state.notification_service
-        .notify_job_assigned_to_worker(worker_user_id, &job)
-        .await;
+    // 5. Check if contract already exists
+    let existing_contracts = sqlx::query(
+        "SELECT id FROM job_contracts WHERE job_id = $1"
+    )
+    .bind(job_id)
+    .fetch_optional(&app_state.db_client.pool)
+    .await
+    .map_err(|e| {
+        println!("❌ [assign_worker_to_job] Error checking existing contracts: {}", e);
+        HttpError::server_error("Failed to check existing contracts")
+    })?;
+
+    if existing_contracts.is_some() {
+        println!("❌ [assign_worker_to_job] Contract already exists for job: {}", job_id);
+        return Err(HttpError::bad_request("A contract already exists for this job"));
+    }
+
+    // 6. Assign worker and create contract/escrow
+    let result = app_state.labour_service
+        .assign_worker_to_job(job_id, auth.user.id, worker_profile_id)
+        .await
+        .map_err(|e| {
+            println!("❌ [assign_worker_to_job] Assignment failed: {}", e);
+            
+            // Handle specific error cases
+            if e.to_string().contains("duplicate key") {
+                HttpError::bad_request("A contract already exists for this job")
+            } else if e.to_string().contains("foreign key") {
+                HttpError::bad_request("Invalid worker or job reference")
+            } else {
+                HttpError::server_error(format!("Failed to assign worker: {}", e))
+            }
+        })?;
 
     println!("✅ [assign_worker_to_job] Worker assigned successfully");
+
+    // 7. Notify worker
+    let _ = app_state.notification_service
+        .notify_job_assigned_to_worker(worker_profile.user_id, &result.job)
+        .await;
 
     Ok(Json(ApiResponse::success(
         "Worker assigned successfully and contract created",
         AssignWorkerResponse {
             job: result.job,
             escrow: result.escrow,
-            contract,
+            contract: result.contract,
         },
     )))
 }
@@ -1563,6 +1590,41 @@ pub async fn release_escrow_payment(
         "Escrow payment released successfully",
         escrow_release,
     )))
+}
+
+pub async fn get_job_contract(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+    Extension(auth): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    // Verify user has access to this job
+    let job = app_state.db_client
+        .get_job_by_id(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+    // Check if user is either employer or assigned worker
+    let is_authorized = job.employer_id == auth.user.id || 
+        job.assigned_worker_id == Some(auth.user.id);
+    
+    if !is_authorized {
+        return Err(HttpError::unauthorized("Not authorized to view contract for this job"));
+    }
+
+    let contract = sqlx::query_as::<_, JobContract>(
+        "SELECT * FROM job_contracts WHERE job_id = $1"
+    )
+    .bind(job_id)
+    .fetch_optional(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    if let Some(contract) = contract {
+        Ok(Json(ApiResponse::success("Contract found", contract)))
+    } else {
+        Err(HttpError::not_found("No contract found for this job"))
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
