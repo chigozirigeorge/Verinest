@@ -2,13 +2,18 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 use sqlx::Error;
-use redis::AsyncCommands;
+use redis::{
+    AsyncCommands,
+    aio::MultiplexedConnection,
+};
 use super::db::DBClient;
 use crate::models::chatnodels::*;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-const CHAT_CACHE_TTL: usize = 3600; // 1 hour
-const MESSAGE_CACHE_TTL: usize = 1800; // 30 minutes
-const UNREAD_CACHE_TTL: usize = 300; // 5 minutes
+pub const CHAT_CACHE_TTL: usize = 300;        // 5 minutes
+pub const MESSAGE_CACHE_TTL: usize = 600;     // 10 minutes  
+pub const UNREAD_CACHE_TTL: usize = 30;       // 30 seconds 
 
 #[async_trait]
 pub trait ChatExt {
@@ -87,6 +92,50 @@ pub trait ChatExt {
         &self,
         message_id: Uuid,
     ) -> Result<Option<ContractProposal>, Error>;
+}
+
+async fn invalidate_chat_caches_async(
+    redis_client: &Arc<Mutex<MultiplexedConnection>>,
+    chat_id: Uuid,
+    participant_one_id: Uuid,
+    participant_two_id: Uuid,
+    sender_id: Uuid,
+) -> Result<(), redis::RedisError> {
+    let mut conn = redis_client.lock().await;
+    
+    // Invalidate chat cache - ignore the return value (number of keys deleted)
+    let _: Result<usize, redis::RedisError> = conn.del(&format!("chat:{}", chat_id)).await;
+    
+    // Invalidate messages cache for this chat
+    let messages_pattern = format!("messages:{}:*", chat_id);
+    let keys: Vec<String> = conn.keys(&messages_pattern).await?;
+    if !keys.is_empty() {
+        let _: Result<usize, redis::RedisError> = conn.del(&keys).await;
+    }
+    
+    // Invalidate user chats cache for both participants
+    let user1_pattern = format!("user_chats:{}:*", participant_one_id);
+    let user2_pattern = format!("user_chats:{}:*", participant_two_id);
+    
+    let keys1: Vec<String> = conn.keys(&user1_pattern).await?;
+    let keys2: Vec<String> = conn.keys(&user2_pattern).await?;
+    
+    let all_keys: Vec<String> = keys1.into_iter().chain(keys2).collect();
+    if !all_keys.is_empty() {
+        let _: Result<usize, redis::RedisError> = conn.del(&all_keys).await;
+    }
+    
+    // Invalidate unread count for receiver
+    let receiver_id = if participant_one_id == sender_id {
+        participant_two_id
+    } else {
+        participant_one_id
+    };
+    let unread_key = format!("unread_count:{}", receiver_id);
+    let _: Result<usize, redis::RedisError> = conn.del(&unread_key).await;
+    
+    tracing::debug!("🔄 Invalidated caches for chat: {}", chat_id);
+    Ok(())
 }
 
 #[async_trait]
@@ -312,78 +361,189 @@ impl ChatExt for DBClient {
         Ok(chat)
     }
     
-    async fn send_message(
-        &self,
-        chat_id: Uuid,
-        sender_id: Uuid,
-        message_type: MessageType,
-        content: String,
-        metadata: Option<serde_json::Value>,
-    ) -> Result<Message, Error> {
-        let mut tx = self.pool.begin().await?;
+    // async fn send_message(
+    //     &self,
+    //     chat_id: Uuid,
+    //     sender_id: Uuid,
+    //     message_type: MessageType,
+    //     content: String,
+    //     metadata: Option<serde_json::Value>,
+    // ) -> Result<Message, Error> {
+    //     let mut tx = self.pool.begin().await?;
         
-        // Insert message
-        let message = sqlx::query_as::<_, Message>(
-            r#"
-            INSERT INTO messages (chat_id, sender_id, message_type, content, metadata)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id, chat_id, sender_id, message_type, content, metadata,
-                      is_read, read_at, created_at
-            "#
-        )
-        .bind(chat_id)
-        .bind(sender_id)
-        .bind(message_type)
-        .bind(content)
-        .bind(metadata)
-        .fetch_one(&mut *tx)
-        .await?;
+    //     // Insert message
+    //     let message = sqlx::query_as::<_, Message>(
+    //         r#"
+    //         INSERT INTO messages (chat_id, sender_id, message_type, content, metadata)
+    //         VALUES ($1, $2, $3, $4, $5)
+    //         RETURNING id, chat_id, sender_id, message_type, content, metadata,
+    //                   is_read, read_at, created_at
+    //         "#
+    //     )
+    //     .bind(chat_id)
+    //     .bind(sender_id)
+    //     .bind(message_type)
+    //     .bind(content)
+    //     .bind(metadata)
+    //     .fetch_one(&mut *tx)
+    //     .await?;
         
-        // Update chat's last_message_at
-        sqlx::query(
-            r#"
-            UPDATE chats
-            SET last_message_at = NOW()
-            WHERE id = $1
-            "#
-        )
-        .bind(chat_id)
-        .execute(&mut *tx)
-        .await?;
+    //     // Update chat's last_message_at
+    //     sqlx::query(
+    //         r#"
+    //         UPDATE chats
+    //         SET last_message_at = NOW()
+    //         WHERE id = $1
+    //         "#
+    //     )
+    //     .bind(chat_id)
+    //     .execute(&mut *tx)
+    //     .await?;
         
-        tx.commit().await?;
+    //     tx.commit().await?;
         
-        // Invalidate relevant caches
-        if let Some(redis_client) = &self.redis_client {
-            let mut conn = redis_client.lock().await;
+    //     // Invalidate relevant caches
+    //     if let Some(redis_client) = &self.redis_client {
+    //         let mut conn = redis_client.lock().await;
             
-            // Invalidate chat cache
-            let chat_key = format!("chat:{}", chat_id);
-            let _: Result<(), redis::RedisError> = conn.del(&chat_key).await;
+    //         // Invalidate chat cache
+    //         let chat_key = format!("chat:{}", chat_id);
+    //         let _: Result<(), redis::RedisError> = conn.del(&chat_key).await;
             
-            // Invalidate messages cache for this chat
-            let messages_pattern = format!("messages:{}:*", chat_id);
-            let _: Result<(), redis::RedisError> = conn.del(&messages_pattern).await;
+    //         // Invalidate messages cache for this chat
+    //         let messages_pattern = format!("messages:{}:*", chat_id);
+    //         let _: Result<(), redis::RedisError> = conn.del(&messages_pattern).await;
             
-            // Get chat to invalidate user chats
-            if let Ok(Some(chat)) = self.get_chat_by_id(chat_id).await {
-                let user1_pattern = format!("user_chats:{}:*", chat.participant_one_id);
-                let user2_pattern = format!("user_chats:{}:*", chat.participant_two_id);
-                let _: Result<(), redis::RedisError> = conn.del(&[user1_pattern, user2_pattern]).await;
+    //         // Get chat to invalidate user chats
+    //         if let Ok(Some(chat)) = self.get_chat_by_id(chat_id).await {
+    //             let user1_pattern = format!("user_chats:{}:*", chat.participant_one_id);
+    //             let user2_pattern = format!("user_chats:{}:*", chat.participant_two_id);
+    //             let _: Result<(), redis::RedisError> = conn.del(&[user1_pattern, user2_pattern]).await;
                 
-                // Invalidate unread count for receiver
-                let receiver_id = if chat.participant_one_id == sender_id {
-                    chat.participant_two_id
-                } else {
-                    chat.participant_one_id
-                };
-                let unread_key = format!("unread_count:{}", receiver_id);
-                let _: Result<(), redis::RedisError> = conn.del(&unread_key).await;
-            }
-        }
+    //             // Invalidate unread count for receiver
+    //             let receiver_id = if chat.participant_one_id == sender_id {
+    //                 chat.participant_two_id
+    //             } else {
+    //                 chat.participant_one_id
+    //             };
+    //             let unread_key = format!("unread_count:{}", receiver_id);
+    //             let _: Result<(), redis::RedisError> = conn.del(&unread_key).await;
+    //         }
+    //     }
         
-        Ok(message)
-    }
+    //     Ok(message)
+    // }
+
+    async fn send_message(
+    &self,
+    chat_id: Uuid,
+    sender_id: Uuid,
+    message_type: MessageType,
+    content: String,
+    metadata: Option<serde_json::Value>,
+) -> Result<Message, Error> {
+    tracing::info!("🗃️ DB: Starting send_message for chat: {}, sender: {}", chat_id, sender_id);
+    
+    let mut tx = self.pool.begin().await
+        .map_err(|e| {
+            tracing::error!("❌ DB: Failed to begin transaction: {}", e);
+            e
+        })?;
+
+    // Insert message
+    let message = sqlx::query_as::<_, Message>(
+        r#"
+        INSERT INTO messages (chat_id, sender_id, message_type, content, metadata)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, chat_id, sender_id, message_type, content, metadata,
+                  is_read, read_at, created_at
+        "#
+    )
+    .bind(chat_id)
+    .bind(sender_id)
+    .bind(message_type)
+    .bind(content)
+    .bind(metadata)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| {
+        tracing::error!("❌ DB: Failed to insert message: {}", e);
+        e
+    })?;
+
+    tracing::debug!("✅ DB: Message inserted: {}", message.id);
+
+    // Update chat's last_message_at
+    sqlx::query(
+        r#"
+        UPDATE chats
+        SET last_message_at = NOW()
+        WHERE id = $1
+        "#
+    )
+    .bind(chat_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        tracing::error!("❌ DB: Failed to update chat last_message_at: {}", e);
+        e
+    })?;
+
+    tracing::debug!("✅ DB: Chat last_message_at updated");
+
+    // Get participant IDs before committing transaction
+    let chat = sqlx::query_as::<_, Chat>(
+        r#"
+        SELECT id, participant_one_id, participant_two_id, job_id, status,
+               last_message_at, created_at
+        FROM chats
+        WHERE id = $1
+        "#
+    )
+    .bind(chat_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await
+        .map_err(|e| {
+            tracing::error!("❌ DB: Failed to commit transaction: {}", e);
+            e
+        })?;
+
+    tracing::debug!("✅ DB: Transaction committed");
+
+    // ASYNC CACHE INVALIDATION - Don't wait for this to complete
+    let redis_client = self.redis_client.clone();
+    let message_clone = message.clone();
+    let chat_clone = chat.clone();
+    
+    tokio::spawn(async move {
+        if let Some(redis_client) = redis_client {
+            tracing::debug!("🔄 Starting async cache invalidation");
+            
+            let start_time = std::time::Instant::now();
+            
+            if let Err(e) = invalidate_chat_caches_async(
+                &redis_client, 
+                chat_clone.id, 
+                chat_clone.participant_one_id, 
+                chat_clone.participant_two_id,
+                sender_id
+            ).await {
+                tracing::warn!("⚠️ Async cache invalidation failed: {}", e);
+            }
+            
+            let duration = start_time.elapsed();
+            tracing::debug!("✅ Async cache invalidation completed in {:?}", duration);
+        }
+    });
+
+    tracing::info!("✅ DB: send_message completed successfully for message: {}", message.id);
+    
+    Ok(message)
+}
+
+// Separate function for async cache invalidation
     
     async fn get_chat_messages(
         &self,
