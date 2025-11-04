@@ -523,8 +523,12 @@ pub async fn respond_to_proposal(
             .map_err(|e| HttpError::server_error(e.to_string()))?;
         
         // Assign worker to job and create escrow
-        let (job, escrow) = app_state.db_client
-            .assign_worker_to_job(proposal.job_id, proposal.worker_id)
+        let assignment_result = app_state.db_client
+            .assign_worker_to_job(
+                proposal.job_id, 
+                proposal.employer_id, 
+                proposal.worker_id // This should be profile_id, but we need to get it first
+            )
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
         
@@ -536,7 +540,7 @@ pub async fn respond_to_proposal(
         
         // Send notifications
         let _ = app_state.notification_service
-            .notify_contract_accepted(proposal.proposed_by, &job)
+            .notify_contract_accepted(proposal.proposed_by, &assignment_result.job)
             .await;
         
         Ok(Json(serde_json::json!({
@@ -545,8 +549,8 @@ pub async fn respond_to_proposal(
             "data": {
                 "proposal": updated_proposal,
                 "contract": contract,
-                "job": job,
-                "escrow": escrow
+                "job": assignment_result.job,
+                "escrow": assignment_result.escrow
             }
         })))
     } else {

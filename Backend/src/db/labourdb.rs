@@ -6,7 +6,7 @@ use sqlx::{Error, types::BigDecimal};
 use num_traits::ToPrimitive;
 
 use super::db::DBClient;
-use crate::models::labourmodel::*;
+use crate::{models::labourmodel::*, service::labour_service::JobAssignmentResult};
 
 #[async_trait]
 pub trait LaborExt {
@@ -107,11 +107,18 @@ pub trait LaborExt {
         status: JobStatus,
     ) -> Result<Job, Error>;
 
-    async fn assign_worker_to_job(
+//     async fn assign_worker_to_job(
+//     &self,
+//     job_id: Uuid,
+//     worker_id: Uuid
+// ) -> Result<(Job, EscrowTransaction), Error>;
+
+async fn assign_worker_to_job(
     &self,
     job_id: Uuid,
-    worker_id: Uuid
-) -> Result<(Job, EscrowTransaction), Error>;
+    employer_user_id: Uuid,
+    worker_profile_id: Uuid, // This should be profile_id (from worker_profiles.id)
+) -> Result<JobAssignmentResult, Error>;
 
     //Job application
     async fn create_job_application(
@@ -747,42 +754,47 @@ async fn get_jobs_by_location_and_category(
         .await
     }
 
+// In labourdb.rs - FIXED VERSION
 async fn assign_worker_to_job(
     &self,
     job_id: Uuid,
-    worker_user_id: Uuid, // Change parameter name for clarity
-) -> Result<(Job, EscrowTransaction), Error> {
+    employer_user_id: Uuid,
+    worker_profile_id: Uuid, // This should be profile_id (from worker_profiles.id)
+) -> Result<JobAssignmentResult, Error> {
     let mut tx = self.pool.begin().await?;
 
-    // First update the job - use worker_user_id directly
+    // 1. Get worker profile to get user_id for contracts/escrow
+    let worker_profile = self.get_worker_profile_by_id(worker_profile_id).await?;
+    let worker_user_id = worker_profile.user_id;
+
+    // 2. Update job with profile_id (matches your schema)
     let job = sqlx::query_as::<_, Job>(
         r#"
         UPDATE jobs 
         SET assigned_worker_id = $2, status = 'in_progress'::job_status, updated_at = NOW()
         WHERE id = $1 AND status = 'open'::job_status
-        RETURNING 
-            id, employer_id, 
-            assigned_worker_id,
-            category,
-            title, description, 
-            location_state, location_city, location_address, 
-            budget,
-            estimated_duration_days, 
-            status, 
-            payment_status, 
-            escrow_amount, platform_fee,
-            partial_payment_allowed, 
-            partial_payment_percentage, 
-            created_at, updated_at, 
-            deadline
+        RETURNING id, employer_id, assigned_worker_id, category, title, description, 
+        location_state, location_city, location_address, budget, estimated_duration_days, 
+        status, payment_status, escrow_amount, platform_fee, partial_payment_allowed, 
+        partial_payment_percentage, created_at, updated_at, deadline
         "#
     )
     .bind(job_id)
-    .bind(worker_user_id) // Use the user_id directly
+    .bind(worker_profile_id) // ✅ CORRECT: profile_id for job assignment
     .fetch_one(&mut *tx)
     .await?;
 
-    // Now create the escrow transaction with the assigned worker
+    // 3. Create contract with user_id (✅ CORRECT: contracts reference users)
+    let contract = self.create_job_contract(
+        job_id,
+        employer_user_id,
+        worker_user_id, // ✅ CORRECT: user_id for contracts
+        job.budget.to_f64().unwrap_or(0.0),
+        job.estimated_duration_days,
+        "Standard work agreement terms".to_string(),
+    ).await?;
+
+    // 4. Create escrow with user_id (✅ CORRECT: escrow references users)
     let escrow = sqlx::query_as::<_, EscrowTransaction>(
         r#"
         INSERT INTO escrow_transactions 
@@ -794,14 +806,19 @@ async fn assign_worker_to_job(
     )
     .bind(job_id.clone())
     .bind(job.employer_id.clone())
-    .bind(worker_user_id) // Use the user_id here too
+    .bind(worker_user_id) // ✅ CORRECT: user_id for escrow
     .bind(job.escrow_amount.clone())
     .bind(job.platform_fee.clone())
     .fetch_one(&mut *tx)
     .await?;
 
     tx.commit().await?;
-    Ok((job, escrow))
+    
+    Ok(JobAssignmentResult {
+        job,
+        contract,
+        escrow,
+    })
 }
 
     async fn create_job_application(

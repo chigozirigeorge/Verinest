@@ -83,7 +83,7 @@ pub async fn assign_worker_to_job(
         employer_id: Uuid,
         worker_user_id: Uuid, // This should be USER ID
     ) -> Result<JobAssignmentResult, ServiceError> {
-        let mut tx = self.db_client.pool.begin().await?;
+        let tx = self.db_client.pool.begin().await?;
 
         // Verify job exists and belongs to employer
         let job = self.db_client.get_job_by_id(job_id)
@@ -108,7 +108,11 @@ pub async fn assign_worker_to_job(
 
         // Update job with assigned worker AND create escrow in one transaction
         // The db_client.assign_worker_to_job expects USER ID for assignment
-        let (updated_job, escrow) = self.db_client.assign_worker_to_job(job_id, worker_user_id).await?;
+       let assignment_result = self.db_client.assign_worker_to_job(
+            job_id, 
+            employer_id, 
+            worker_profile.id // Use profile_id (not user_id) for the third argument
+        ).await?;
 
         // Create job contract - use worker_user_id (USER ID)
         let contract = self.db_client.create_job_contract(
@@ -124,21 +128,21 @@ pub async fn assign_worker_to_job(
         self.audit_service.log_job_assignment(
             employer_id,
             worker_user_id,
-            &updated_job,
+            &assignment_result.job,
             &contract,
         ).await?;
 
         tx.commit().await?;
 
         // Send notifications
-        self.notification_service.notify_job_assigned_to_worker(worker_user_id, &updated_job).await?;
+        self.notification_service.notify_job_assigned_to_worker(worker_user_id, &assignment_result.job).await?;
         self.notification_service.notify_contract_awaiting_signature(worker_user_id, &contract).await?;
         self.notification_service.notify_contract_awaiting_signature(employer_id, &contract).await?;
 
         Ok(JobAssignmentResult {
-            job: updated_job,
+            job: assignment_result.job,
             contract,
-            escrow,
+            escrow: assignment_result.escrow,
         })
     }
 
@@ -331,7 +335,7 @@ pub async fn assign_worker_to_job(
         worker_id: Uuid,
         progress_data: SubmitProgressDto,
     ) -> Result<ProgressSubmissionResult, ServiceError> {
-        let mut tx = self.db_client.pool.begin().await?;
+        let tx = self.db_client.pool.begin().await?;
 
         // Verify job and worker assignment
         let job = self.db_client.get_job_by_id(job_id)
@@ -405,7 +409,7 @@ pub async fn assign_worker_to_job(
         job_id: Uuid,
         employer_id: Uuid,
     ) -> Result<JobCompletionResult, ServiceError> {
-        let mut tx = self.db_client.pool.begin().await?;
+        let tx = self.db_client.pool.begin().await?;
 
         // Verify job ownership and status
         let job = self.db_client.get_job_by_id(job_id)

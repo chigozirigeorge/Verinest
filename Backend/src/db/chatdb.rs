@@ -514,7 +514,7 @@ impl ChatExt for DBClient {
 
     // ASYNC CACHE INVALIDATION - Don't wait for this to complete
     let redis_client = self.redis_client.clone();
-    let message_clone = message.clone();
+    let _message_clone = message.clone();
     let chat_clone = chat.clone();
     
     tokio::spawn(async move {
