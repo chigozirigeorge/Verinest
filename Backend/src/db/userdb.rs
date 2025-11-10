@@ -303,14 +303,14 @@ impl UserExt for DBClient {
             WHERE id = $1
             RETURNING 
                 id, name, username, email, password,
-                role,
-                trust_score, verified,
+                role, trust_score, verified,
                 verification_type,
                 referral_code, referral_count, google_id, avatar_url,
                 wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                 verification_token, token_expires_at,
+                subscription_tier, role_change_count, role_change_reset_at,
                 created_at,
                 updated_at
             "#
@@ -327,18 +327,18 @@ impl UserExt for DBClient {
             r#"
             SELECT 
                 id, name, username, email, password,
-                role,
-                trust_score, verified,
+                role, trust_score, verified,
                 verification_type,
                 referral_code, referral_count, google_id, avatar_url,
                 wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                 verification_token, token_expires_at,
+                subscription_tier, role_change_count, role_change_reset_at,
                 created_at,
                 updated_at
             FROM users
-            WHERE role = 'verifier'::user_role
+            WHERE base_role = 'verifier'::user_role
             AND id NOT IN (
                 SELECT assigned_verifier 
                 FROM disputes 
@@ -355,18 +355,18 @@ impl UserExt for DBClient {
             r#"
             SELECT 
                 id, name, username, email, password,
-                role,
-                trust_score, verified,
+                role, trust_score, verified,
                 verification_type,
                 referral_code, referral_count, google_id, avatar_url,
                 wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                 verification_token, token_expires_at,
+                subscription_tier, role_change_count, role_change_reset_at,
                 created_at,
                 updated_at
             FROM users
-            WHERE role = 'admin'::user_role
+            WHERE base_role = 'admin'::user_role
             LIMIT 1
             "#
         )
@@ -410,10 +410,10 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality,
-                    dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                     verification_token, token_expires_at,
-                    created_at, 
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
                     updated_at
                 FROM users
                 WHERE id = $1
@@ -432,10 +432,10 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality,
-                    dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                     verification_token, token_expires_at,
-                    created_at, 
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
                     updated_at
                 FROM users 
                 WHERE username = $1
@@ -454,10 +454,10 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality,
-                    dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                     verification_token, token_expires_at,
-                    created_at, 
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
                     updated_at
                 FROM users 
                 WHERE email = $1
@@ -476,10 +476,10 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality,
-                    dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
                     verification_token, token_expires_at,
-                    created_at, 
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
                     updated_at
                 FROM users 
                 WHERE verification_token = $1
@@ -504,16 +504,16 @@ impl UserExt for DBClient {
             r#"
             SELECT 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at, 
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             FROM users
             ORDER BY created_at DESC LIMIT $1 OFFSET $2
             "#
@@ -539,17 +539,16 @@ impl UserExt for DBClient {
             VALUES ($1, $2, $3, $4, $5, $6, 'unverified'::verification_status) 
             RETURNING 
                 id, name, username, email, password,
-                role,
-                trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(name.into())
@@ -584,16 +583,16 @@ impl UserExt for DBClient {
             WHERE id = $2
             RETURNING 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(new_name.into())
@@ -610,20 +609,20 @@ impl UserExt for DBClient {
         sqlx::query_as::<_, User>(
             r#"
             UPDATE users
-            SET role = $1, updated_at = NOW()
+            SET base_role = $1, updated_at = NOW()
             WHERE id = $2
             RETURNING 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(new_role)
@@ -644,16 +643,16 @@ impl UserExt for DBClient {
             WHERE id = $2
             RETURNING 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(new_password)
@@ -673,15 +672,16 @@ impl UserExt for DBClient {
             SET transaction_pin = $1, updated_at = NOW()
             WHERE id = $2
             RETURNING id, name, username, email, password,
-                role as "role: UserRole", trust_score, verified,
-                verification_type as "verification_type: VerificationType",
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status as "verification_status: VerificationStatus",
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at as "created_at!: DateTime<Utc>", 
-                updated_at as "updated_at!: DateTime<Utc>"
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#,
         )
         .bind(transaction_pin)
@@ -745,16 +745,16 @@ impl UserExt for DBClient {
             WHERE id = $2
             RETURNING 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(score_to_add)
@@ -780,16 +780,16 @@ impl UserExt for DBClient {
             r#"
             SELECT 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             FROM users 
             ORDER BY trust_score DESC 
             LIMIT $1
@@ -808,16 +808,16 @@ impl UserExt for DBClient {
             r#"
             SELECT 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             FROM users 
             WHERE referral_code = $1
             "#
@@ -839,16 +839,16 @@ impl UserExt for DBClient {
             WHERE id = $2
             RETURNING 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(referral_code)
@@ -868,17 +868,17 @@ impl UserExt for DBClient {
             SET trust_score = trust_score + $1, updated_at = NOW()
             WHERE id = $2
             RETURNING 
-                id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+               id, name, username, email, password,
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(points)
@@ -918,16 +918,16 @@ impl UserExt for DBClient {
             WHERE id = $1
             RETURNING 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(user_id)
@@ -1003,16 +1003,16 @@ impl UserExt for DBClient {
             r#"
             SELECT
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             FROM users
             WHERE google_id = $1
             "#
@@ -1040,16 +1040,16 @@ impl UserExt for DBClient {
             VALUES ($1, $2, $3, $4, $5, $6, true, 'unverified'::verification_status)
             RETURNING 
                 id, name, username, email, password,
-                role,
-                trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(name)
@@ -1097,17 +1097,16 @@ impl UserExt for DBClient {
             WHERE id = $2
             RETURNING 
                 id, name, username, email, password,
-                role,
-                trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(wallet_address)
@@ -1201,7 +1200,7 @@ impl UserExt for DBClient {
             r#"
             SELECT 
                 id, name, username, email, password,
-                role, trust_score, verified,
+                base_role, trust_score, verified,
                 verification_type,
                 referral_code, referral_count, google_id, avatar_url,
                 wallet_address, verification_status,
@@ -1313,16 +1312,16 @@ impl UserExt for DBClient {
             WHERE id = $1
             RETURNING 
                 id, name, username, email, password,
-                role,
-                trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(user_id)
@@ -1347,15 +1346,16 @@ impl UserExt for DBClient {
             r#"
             SELECT 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             FROM users 
             WHERE verification_number = $1 
                 OR nin_number = $1
@@ -1378,15 +1378,16 @@ impl UserExt for DBClient {
             WHERE id = $2
             RETURNING 
                 id, name, username, email, password,
-                role, trust_score, verified,
-                verification_type,
-                referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
-                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
-                verification_token, token_expires_at,
-                created_at,
-                updated_at
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
             "#
         )
         .bind(avatar_url)
