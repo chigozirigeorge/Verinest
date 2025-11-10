@@ -14,7 +14,11 @@ use crate::{
     db::supportdb::SupportExt,
     error::HttpError,
     middleware::JWTAuthMiddeware,
-    models::supportmodel::*,
+    models::{
+        usermodel::UserRole,
+        supportmodel::*
+    },
+
     AppState,
 };
 
@@ -88,8 +92,8 @@ pub async fn get_tickets(
     Query(params): Query<SupportQueryParams>,
 ) -> Result<impl IntoResponse, HttpError> {
     // Only customer care and admin can access all tickets
-    if auth.user.role != crate::models::usermodel::UserRole::CustomerCare 
-        && auth.user.role != crate::models::usermodel::UserRole::Admin {
+    if auth.user.role != UserRole::CustomerCare 
+        && auth.user.role != UserRole::Admin {
         return Err(HttpError::unauthorized("Not authorized"));
     }
 
@@ -146,8 +150,8 @@ pub async fn add_message(
         .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("Ticket not found"))?;
 
-    let is_customer_care = auth.user.role == crate::models::usermodel::UserRole::CustomerCare 
-        || auth.user.role == crate::models::usermodel::UserRole::Admin;
+    let is_customer_care = auth.user.role == UserRole::CustomerCare 
+        || auth.user.role == UserRole::Admin;
 
     if !is_customer_care && ticket.user_id != auth.user.id {
         return Err(HttpError::unauthorized("Not authorized to access this ticket"));
@@ -185,8 +189,8 @@ pub async fn update_ticket_status(
     Json(body): Json<UpdateTicketStatusDto>,
 ) -> Result<impl IntoResponse, HttpError> {
     // Only customer care and admin can update status
-    if auth.user.role != crate::models::usermodel::UserRole::CustomerCare 
-        && auth.user.role != crate::models::usermodel::UserRole::Admin {
+    if auth.user.role != UserRole::CustomerCare 
+        && auth.user.role != UserRole::Admin {
         return Err(HttpError::unauthorized("Not authorized"));
     }
 
@@ -209,8 +213,8 @@ pub async fn assign_ticket(
     Json(body): Json<AssignTicketDto>,
 ) -> Result<impl IntoResponse, HttpError> {
     // Only customer care and admin can assign tickets
-    if auth.user.role != crate::models::usermodel::UserRole::CustomerCare 
-        && auth.user.role != crate::models::usermodel::UserRole::Admin {
+    if auth.user.role != UserRole::CustomerCare 
+        && auth.user.role != UserRole::Admin {
         return Err(HttpError::unauthorized("Not authorized"));
     }
 
@@ -237,8 +241,8 @@ pub async fn get_ticket(
         .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("Ticket not found"))?;
 
-    let is_customer_care = auth.user.role == crate::models::usermodel::UserRole::CustomerCare 
-        || auth.user.role == crate::models::usermodel::UserRole::Admin;
+    let is_customer_care = auth.user.role == UserRole::CustomerCare 
+        || auth.user.role == UserRole::Admin;
 
     if !is_customer_care && ticket.ticket.user_id != auth.user.id {
         return Err(HttpError::unauthorized("Not authorized to access this ticket"));
@@ -262,8 +266,8 @@ pub async fn get_ticket_messages(
         .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("Ticket not found"))?;
 
-    let is_customer_care = auth.user.role == crate::models::usermodel::UserRole::CustomerCare 
-        || auth.user.role == crate::models::usermodel::UserRole::Admin;
+    let is_customer_care = auth.user.role == UserRole::CustomerCare 
+        || auth.user.role == UserRole::Admin;
 
     if !is_customer_care && ticket.user_id != auth.user.id {
         return Err(HttpError::unauthorized("Not authorized to access this ticket"));

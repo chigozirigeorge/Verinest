@@ -7,3 +7,4 @@ pub mod labourmodel;
 pub mod chatnodels;
 pub mod supportmodel;
 pub mod vendormodels;
+pub mod subscriptionmodels;

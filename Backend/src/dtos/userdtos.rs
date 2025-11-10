@@ -435,3 +435,9 @@ pub struct VerifyPasswordResponse {
     pub verified: bool,
     pub message: String,
 }
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct SubscribePremiumDto {
+    #[validate(length(min = 1))]
+    pub payment_reference: String,
+}

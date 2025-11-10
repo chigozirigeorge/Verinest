@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 
 use crate::{
-    db::userdb::UserExt, 
+    db::{userdb::UserExt, naira_walletdb::NairaWalletExt, subscriptiondb::SubscriptionExt}, 
     dtos::userdtos::*, 
     error::{ErrorMessage, HttpError}, 
     handler::{
@@ -20,8 +20,8 @@ use crate::{
         //     verify_wallet
         // }
         }, middleware::{role_check, JWTAuthMiddeware}, 
-        models::usermodel::*, 
-        service::referral::generate_referral_link, 
+        models::{usermodel::*, subscriptionmodels::SubscriptionTier}, 
+        service::{referral::generate_referral_link, subscription_service::SubscriptionService}, 
         utils::password, AppState};
 
 
@@ -94,6 +94,13 @@ pub fn users_handler() -> Router {
     .route("/transaction-pin/verify", post(verify_transaction_pin))
     .route("/transaction-pin", put(set_transaction_pin))
     .route("/verify-password", post(verify_password))
+    .route("/subscription/premium", 
+            post(subscribe_premium)
+            .get(get_subscription_status)
+    )
+    .route("/subscription/premium/initiate", post(initiate_premium_payment))
+    .route("/subscription/role-change-stats", get(get_role_change_stats))
+    .route("/subscription/benefits", get(get_subscription_benefits))
 }
 
 
@@ -133,14 +140,6 @@ pub async fn verify_transaction_pin(
             expires_at: None,
         }));
     }
-
-    // // Optional: Create a temporary verification session (expires in 5 minutes)
-    
-    // let session_token = Uuid::new_v4().to_string();
-    
-    // // Store verification session (you'll need to add this to your database)
-
-    // app_state.db_client.store_pin_verification_session(user_id, &session_token, expires_at).await?;
 
     let expires_at = Utc::now() + chrono::Duration::minutes(5);
 
@@ -623,15 +622,17 @@ pub async fn upgrade_user_role(
         return Err(HttpError::unauthorized("You can only upgrade your own role"));
     }
 
+    SubscriptionService::check_role_change_limit(app_state.clone(), user_id).await?;
+
+
     // Only allow upgrading to Worker or Employer
-    let allowed_roles = vec![UserRole::Worker, UserRole::Employer];
+    let allowed_roles = vec![UserRole::Worker, UserRole::Employer, UserRole::Vendor];
     if !allowed_roles.contains(&body.new_role) {
         return Err(HttpError::bad_request(
-            "You can only upgrade to Worker or Employer role"
+            "You can only upgrade to Worker, Employer or Vendor role"
         ));
     }
 
-    // Check if user is already verified (optional requirement)
     let user = app_state.db_client
         .get_user(Some(user_id), None, None, None)
         .await
@@ -653,6 +654,12 @@ pub async fn upgrade_user_role(
             ));
         }
     }
+
+    // Increment role change count
+    let _ = app_state.db_client
+        .increment_role_change_count(user_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     // Update the user role
     let updated_user = app_state.db_client
@@ -781,6 +788,13 @@ pub async fn get_available_roles(
             description: "Post jobs and hire workers".to_string(),
             requires_verification: false,
         });
+
+        available_roles.push(RoleInfo {
+            role: UserRole::Vendor,
+            name: "Vendor".to_string(),
+            description: "Post services, sell items  and recieve payments".to_string(),
+            requires_verification: false,
+        });
     }
 
     // If user is already a Worker, they can become Employer (and vice versa)
@@ -789,6 +803,13 @@ pub async fn get_available_roles(
             role: UserRole::Employer,
             name: "Employer".to_string(),
             description: "Post jobs and hire workers".to_string(),
+            requires_verification: false,
+        });
+
+        available_roles.push(RoleInfo {
+            role: UserRole::Vendor,
+            name: "Vendor".to_string(),
+            description: "Post services, sell items  and recieve payments".to_string(),
             requires_verification: false,
         });
     }
@@ -800,6 +821,29 @@ pub async fn get_available_roles(
             description: "Find and apply for jobs".to_string(),
             requires_verification: true,
         });
+
+        available_roles.push(RoleInfo {
+            role: UserRole::Vendor,
+            name: "Vendor".to_string(),
+            description: "Post services, sell items  and recieve payments".to_string(),
+            requires_verification: false,
+        });
+    }
+
+    if user.role == UserRole::Vendor {
+        available_roles.push(RoleInfo {
+            role: UserRole::Worker,
+            name: "Worker".to_string(),
+            description: "Find and apply for jobs".to_string(),
+            requires_verification: true,
+        });
+
+        available_roles.push(RoleInfo {
+            role: UserRole::Employer,
+            name: "Employer".to_string(),
+            description: "Post jobs and hire workers".to_string(),
+            requires_verification: false,
+        });
     }
 
     Ok(Json(serde_json::json!({
@@ -807,6 +851,195 @@ pub async fn get_available_roles(
         "data": {
             "current_role": user.role.to_str(),
             "available_roles": available_roles
+        }
+    })))
+}
+
+
+pub async fn subscribe_premium(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth_user): Extension<JWTAuthMiddeware>,
+    Json(body): Json<SubscribePremiumDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+
+    let user_id = auth_user.user.id;
+
+    let subscription = SubscriptionService::create_premium_subscription(
+        app_state.clone(),
+        user_id,
+        body.payment_reference,
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "message": "Premium subscription activated successfully! You now have unlimited role changes.",
+        "data": {
+            "subscription": {
+                "id": subscription.id,
+                "tier": subscription.tier.to_str(),
+                "status": subscription.status,
+                "expires_at": subscription.expires_at,
+                "benefits": subscription.tier.benefits()
+            },
+            "user": {
+                "subscription_tier": "premium",
+                "role_change_limit": "unlimited"
+            }
+        }
+    })))
+}
+
+pub async fn initiate_premium_payment(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth_user): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    let user_id = auth_user.user.id;
+    let amount = 9000.0; // 9k Naira
+    
+    // Check if user already has premium
+    let user = app_state.db_client
+        .get_user(Some(user_id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+    
+    if user.subscription_tier == SubscriptionTier::Premium {
+        return Err(HttpError::bad_request("You already have a premium subscription"));
+    }
+    
+    // Generate payment reference
+    let reference = format!("PREMIUM_{}", Uuid::new_v4().to_string()[..8].to_uppercase());
+    
+    // Create pending transaction
+    let wallet = app_state.db_client
+        .get_naira_wallet(user_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Wallet not found"))?;
+    
+    let amount_kobo = (amount * 100.0) as i64;
+    
+    // Check wallet balance
+    if wallet.balance < amount_kobo {
+        return Err(HttpError::bad_request(
+            format!("Insufficient wallet balance. Required: ₦{:.2}", amount)
+        ));
+    }
+    
+    // Create pending transaction
+    let _tx = sqlx::query(
+        r#"
+        INSERT INTO wallet_transactions 
+        (wallet_id, user_id, transaction_type, amount, balance_before, balance_after,
+        reference, description, status, metadata)
+        VALUES ($1, $2, 'subscription_payment', $3, $4, $4, $5, $6, 'pending', $7)
+        "#
+    )
+    .bind(wallet.id)
+    .bind(user_id)
+    .bind(amount_kobo)
+    .bind(wallet.balance)
+    .bind(&reference)
+    .bind("Premium subscription payment")
+    .bind(serde_json::json!({"subscription_tier": "premium", "duration": "1_year"}))
+    .execute(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
+    
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "message": "Payment initiated. Confirm with your transaction PIN.",
+        "data": {
+            "reference": reference,
+            "amount": amount,
+            "description": "Premium Subscription (1 Year)",
+            "requires_pin": true
+        }
+    })))
+}
+
+// Get role change statistics
+pub async fn get_role_change_stats(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth_user): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    let stats = SubscriptionService::get_role_change_stats(
+        app_state.clone(), 
+        auth_user.user.id
+    ).await?;
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "data": {
+            "current_count": stats.current_count,
+            "monthly_limit": stats.monthly_limit,
+            "remaining_changes": stats.remaining_changes,
+            "reset_at": stats.reset_at,
+            "has_premium": stats.has_premium,
+            "premium_price": 9000.0
+        }
+    })))
+}
+
+// Get subscription benefits
+pub async fn get_subscription_benefits(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth_user): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    let user = app_state.db_client
+        .get_user(Some(auth_user.user.id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    let current_tier = user.subscription_tier;
+    let benefits = current_tier.benefits();
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "data": {
+            "current_tier": current_tier.to_str(),
+            "benefits": benefits,
+            "premium_tier": {
+                "price": 9000.0,
+                "duration": "1 year",
+                "benefits": SubscriptionTier::Premium.benefits()
+            }
+        }
+    })))
+}
+
+// Get subscription status
+pub async fn get_subscription_status(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth_user): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    let user = app_state.db_client
+        .get_user(Some(auth_user.user.id), None, None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    // Get active subscription if exists
+    let active_subscription = app_state.db_client
+        .get_user_subscription(auth_user.user.id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "data": {
+            "user_tier": user.subscription_tier.to_str(),
+            "has_premium": user.clone().has_premium_subscription(),
+            "active_subscription": active_subscription,
+            "role_change_stats": {
+                "current_count": user.role_change_count.clone().unwrap_or(0),
+                "monthly_limit": user.clone().get_monthly_role_changes(),
+                "remaining": user.clone().get_monthly_role_changes() - user.role_change_count.unwrap_or(0)
+            }
         }
     })))
 }

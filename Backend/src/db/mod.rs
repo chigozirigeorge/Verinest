@@ -8,3 +8,4 @@ pub mod chatdb;
 pub mod supportdb;
 pub mod vendordb;
 pub mod cache;
+pub mod subscriptiondb;

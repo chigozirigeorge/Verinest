@@ -2,6 +2,8 @@
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::models::{subscriptionmodels::SubscriptionTier};
+
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, sqlx::Type, PartialEq)]
 #[sqlx(type_name = "user_role", rename_all = "snake_case")]
 pub enum UserRole {
@@ -74,7 +76,7 @@ pub enum VerificationStatus {
 impl VerificationStatus {
     pub fn to_str(&self) -> &str {
         match self {
-            VerificationStatus::Unverified => "unverified", //added here
+            VerificationStatus::Unverified => "unverified",
             VerificationStatus::Pending => "pending",
             VerificationStatus::Submitted => "submitted",
             VerificationStatus::Processing => "processing",
@@ -91,13 +93,16 @@ pub struct User {
     pub name: String,
     pub username: String,
     pub email: String,
-    pub password: Option<String>, // Changed to Option for OAuth users
+    pub password: Option<String>, 
     pub role: UserRole,
+    pub subscription_tier: SubscriptionTier, // Free, Premium
+    pub role_change_count: Option<i32>,
     pub trust_score: i32,
     pub verified: bool,
     pub verification_type: VerificationType,
     pub referral_code: Option<String>,
     pub referral_count: Option<i32>,
+    pub role_change_reset_at: Option<DateTime<Utc>>,
     
     // OAuth fields
     pub google_id: Option<String>,
@@ -139,4 +144,24 @@ pub struct User {
 
     #[serde(rename = "updatedAt")]
     pub updated_at: DateTime<Utc>,
+}
+
+
+
+impl User {
+    pub fn has_premium_subscription(&self) -> bool {
+        self.subscription_tier == SubscriptionTier::Premium
+    }
+
+    pub fn get_effective_role(&self) -> UserRole {
+        self.role
+    }
+
+    pub fn get_monthly_role_changes(self) -> i32 {
+        if self.has_premium_subscription() {
+            i32::MAX 
+        } else {
+            5
+        }
+    }
 }

@@ -15,3 +15,4 @@ pub mod verification_service;
 pub mod subscriptions;
 pub mod background_jobs;
 pub mod vendor_order_service;
+pub mod subscription_service;

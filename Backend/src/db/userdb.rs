@@ -7,10 +7,7 @@ use sqlx::Row;
 use super::db::DBClient;
 
 use crate::models::{
-    referralmodel::{Referral, ReferralStats, ReferralUser}, 
-    usermodel::{User, UserRole, VerificationStatus, VerificationType}, 
-    walletmodels::{UserWallet, WalletUpdateRequest},
-    verificationmodels::*,
+    referralmodel::{Referral, ReferralStats, ReferralUser}, usermodel::{User, UserRole, VerificationStatus, VerificationType}, verificationmodels::*, walletmodels::{UserWallet, WalletUpdateRequest}
 };
 
 use crate::db::verificationdb::VerificationExt;
@@ -260,7 +257,33 @@ pub trait UserExt {
         page: u32,
         limit: usize,
     ) -> Result<Vec<(User, Vec<VerificationDocument>)>, sqlx::Error>;
+    
+    async fn get_role_change_stats(
+        &self,
+        user_id: Uuid,
+    ) -> Result<RoleChangeStats, sqlx::Error>;
+    
+    async fn increment_role_change_count(
+        &self,
+        user_id: Uuid,
+    ) -> Result<User, sqlx::Error>;
+    
+    async fn update_user_role_change_count(
+        &self,
+        user_id: Uuid,
+        new_count: i32,
+        reset_at: DateTime<Utc>,
+    ) -> Result<User, sqlx::Error>;
 
+}
+
+#[derive(Debug)]
+pub struct RoleChangeStats {
+    pub current_count: i32,
+    pub monthly_limit: i32,
+    pub reset_at: DateTime<Utc>,
+    pub has_premium: bool,
+    pub remaining_changes: i32
 }
 
 #[async_trait]
@@ -1400,5 +1423,82 @@ impl UserExt for DBClient {
         }
         
         Ok(result)
+    }
+    
+    async fn get_role_change_stats(
+        &self,
+        user_id: Uuid,
+    ) -> Result<RoleChangeStats, sqlx::Error> {
+        let user = self.get_user(Some(user_id), None, None, None).await?
+            .ok_or_else(|| sqlx::Error::RowNotFound)?;
+            
+        let monthly_limit = user.clone().get_monthly_role_changes();
+        let current_count = user.role_change_count.unwrap_or(0);
+        let reset_at = user.role_change_reset_at.unwrap_or_else(|| Utc::now() + chrono::Duration::days(30));
+        
+        Ok(RoleChangeStats {
+            current_count,
+            monthly_limit,
+            reset_at,
+            has_premium: user.has_premium_subscription(),
+            remaining_changes: monthly_limit.saturating_sub(current_count),
+        })
+    }
+    
+    async fn increment_role_change_count(
+        &self,
+        user_id: Uuid,
+    ) -> Result<User, sqlx::Error> {
+        let user = self.get_user(Some(user_id), None, None, None).await?
+            .ok_or_else(|| sqlx::Error::RowNotFound)?;
+            
+        let now = Utc::now();
+        let (new_count, reset_at) = if let Some(reset_at) = user.role_change_reset_at {
+            if now > reset_at {
+                // Reset period passed, start fresh
+                (1, now + chrono::Duration::days(30))
+            } else {
+                // Increment within current period
+                (user.role_change_count.unwrap_or(0) + 1, reset_at)
+            }
+        } else {
+            // First time setting
+            (1, now + chrono::Duration::days(30))
+        };
+        
+        sqlx::query_as::<_, User>(
+            r#"
+            UPDATE users
+            SET role_change_count = $1, role_change_reset_at = $2, updated_at = NOW()
+            WHERE id = $3
+            RETURNING *
+            "#
+        )
+        .bind(new_count)
+        .bind(reset_at)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+    }
+    
+    async fn update_user_role_change_count(
+        &self,
+        user_id: Uuid,
+        new_count: i32,
+        reset_at: DateTime<Utc>,
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            r#"
+            UPDATE users
+            SET role_change_count = $1, role_change_reset_at = $2, updated_at = NOW()
+            WHERE id = $3
+            RETURNING *
+            "#
+        )
+        .bind(new_count)
+        .bind(reset_at)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
     }
 }

@@ -17,7 +17,7 @@ use crate::{
     error::HttpError,
     mail::mails::send_otp_email,
     middleware::JWTAuthMiddeware,
-    models::usermodel::{VerificationStatus, VerificationType},
+    models::usermodel::{VerificationStatus, VerificationType, UserRole},
     utils::{image_utils, otp_generator},
     AppState,
 };
@@ -256,8 +256,8 @@ pub async fn get_pending_verifications(
     Extension(auth): Extension<JWTAuthMiddeware>,
 ) -> Result<impl IntoResponse, HttpError> {
     // Check if user is admin or verifier
-    if auth.user.role != crate::models::usermodel::UserRole::Admin 
-        && auth.user.role != crate::models::usermodel::UserRole::Verifier {
+    if auth.user.role != UserRole::Admin 
+        && auth.user.role != UserRole::Verifier {
         return Err(HttpError::unauthorized("Insufficient permissions"));
     }
 
@@ -283,8 +283,8 @@ pub async fn review_verification(
         .map_err(|e| HttpError::bad_request(e.to_string()))?;
 
     // Check if user is admin or verifier
-    if auth.user.role != crate::models::usermodel::UserRole::Admin 
-        && auth.user.role != crate::models::usermodel::UserRole::Verifier {
+    if auth.user.role != UserRole::Admin 
+        && auth.user.role != UserRole::Verifier {
         return Err(HttpError::unauthorized("Insufficient permissions"));
     }
 
