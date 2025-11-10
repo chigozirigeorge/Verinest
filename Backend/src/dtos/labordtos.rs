@@ -553,3 +553,9 @@ pub struct SignContractDto {
     pub otp_code: Option<String>, // OTP for verification
     pub request_otp: Option<bool>, // Flag to request OTP
 }
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct RejectApplicationDto {
+    #[validate(length(min = 1, max = 500, message = "Rejection reason must be between 1 and 500 characters"))]
+    pub rejection_reason: String,
+}

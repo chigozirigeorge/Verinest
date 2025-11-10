@@ -534,6 +534,61 @@ impl NotificationService {
         
         Ok(())
     }
+
+    pub async fn notify_application_rejected(
+        &self,
+        worker_id: Uuid,
+        job: &Job,
+        _application: &JobApplication,
+        rejection_reason: &String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Ok(Some(worker)) = self.db_client.get_user(Some(worker_id), None, None, None).await {
+            self.create_notification_with_email(
+                worker_id,
+                "Application was Rejected".to_string(),
+                format!("Unfortunately our esteemed worker your Application for {} was rejected due to {}, Make edits to your portfolio and keep hopes high and we would ensure to keep updating you with jobs close to you", job.title, rejection_reason),
+                "job_assigned".to_string(),
+                Some(job.id),
+                true, // Send email for assignment
+            ).await?;
+            
+            // Send dedicated email
+            let _ = mails::send_job_assignment_email(
+                &worker.email,
+                &worker.name,
+                &job.title,
+            ).await;
+        }
+        
+        Ok(())
+    }
+
+    pub async fn notify_application_reviewed(
+        &self,
+        worker_id: Uuid,
+        job: &Job,
+        _application: &JobApplication,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Ok(Some(worker)) = self.db_client.get_user(Some(worker_id), None, None, None).await {
+            self.create_notification_with_email(
+                worker_id,
+                "Job Review".to_string(),
+                format!("Your application is under Review"),
+                "job_assigned".to_string(),
+                Some(job.id),
+                true, // Send email for assignment
+            ).await?;
+            
+            // Send dedicated email
+            let _ = mails::send_job_assignment_email(
+                &worker.email,
+                &worker.name,
+                &job.title,
+            ).await;
+        }
+        
+        Ok(())
+    }
     
     pub async fn notify_job_assigned_to_worker(
         &self,
