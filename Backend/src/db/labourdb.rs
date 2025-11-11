@@ -1492,16 +1492,20 @@ async fn get_jobs_by_location_and_category(
     }
 
     async fn get_employer_active_contracts(
-        &self, 
-        employer_id: Uuid
-    ) -> Result<Vec<JobContract>, Error> {
+        &self,
+        employer_id: Uuid,
+    ) -> Result<Vec<JobContract>, sqlx::Error> {
         sqlx::query_as::<_, JobContract>(
             r#"
-            SELECT c.id, c.job_id, c.employer_id, c.worker_id, c.agreed_rate, 
-            c.agreed_timeline, c.terms, c.signed_by_employer, c.signed_by_worker, c.contract_date
+            SELECT 
+                c.id, c.job_id, c.employer_id, c.worker_id,
+                c.agreed_rate, c.agreed_timeline, c.terms,
+                c.signed_by_employer, c.signed_by_worker, c.status,
+                c.created_at, c.updated_at, c.contract_date
             FROM job_contracts c
             INNER JOIN jobs j ON c.job_id = j.id
-            WHERE c.employer_id = $1 AND j.status = 'in_progress'::job_status
+            WHERE c.employer_id = $1 
+            AND j.status = 'in_progress'::job_status
             ORDER BY c.contract_date DESC
             "#
         )
