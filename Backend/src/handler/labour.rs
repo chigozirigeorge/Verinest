@@ -9,6 +9,7 @@ use rand::Rng;
 use uuid::Uuid;
 use validator::Validate;
 use num_traits::ToPrimitive;
+use sqlx::Postgres;
 
 use crate::{
     db::{
@@ -1272,7 +1273,6 @@ pub async fn get_worker_details_smart(
     )))
 }
 
-// Dashboard Handlers
 pub async fn get_worker_dashboard(
     Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth): Extension<JWTAuthMiddeware>,
@@ -1283,7 +1283,7 @@ pub async fn get_worker_dashboard(
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     let portfolio = app_state.db_client
-        .get_worker_portfolio(auth.user.id)
+        .get_worker_portfolio(profile.id) // Use profile.id, not user_id
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
@@ -1292,17 +1292,55 @@ pub async fn get_worker_dashboard(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // Get active jobs (jobs where worker is assigned and status is in_progress)
+    // Get active jobs
     let active_jobs = app_state.db_client
-        .get_worker_active_jobs(auth.user.id)
+        .get_worker_active_jobs(profile.id) // Use profile.id
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     // Get pending applications
     let pending_applications = app_state.db_client
-        .get_worker_pending_applications(auth.user.id)
+        .get_worker_pending_applications(profile.id) // Use profile.id
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Get active contracts
+    let active_contracts = sqlx::query_as::<_, JobContract>(
+        r#"
+        SELECT * FROM job_contracts 
+        WHERE worker_id = $1 AND status = 'active'::contract_status
+        "#
+    )
+    .bind(auth.user.id)
+    .fetch_all(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Calculate completed jobs
+        let completed_jobs = sqlx::query_scalar::<Postgres, i32>(
+            r#"
+            SELECT COUNT(*) FROM jobs 
+            WHERE assigned_worker_id = $1 AND status = 'completed'::job_status
+            "#
+        )
+        .bind(profile.id)
+        .fetch_one(&app_state.db_client.pool)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+        // Calculate total earnings
+        let total_earnings = sqlx::query_scalar::<Postgres, BigDecimal>(
+            r#"
+            SELECT COALESCE(SUM(amount), 0) FROM escrow_transactions 
+            WHERE worker_id = $1 AND status = 'completed'::payment_status
+            "#
+        )
+        .bind(auth.user.id)
+        .fetch_one(&app_state.db_client.pool)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .to_f64()
+        .unwrap_or(0.0);
 
     let dashboard = WorkerDashboard {
         profile,
@@ -1310,6 +1348,9 @@ pub async fn get_worker_dashboard(
         reviews,
         active_jobs,
         pending_applications,
+        active_contracts,
+        completed_jobs: completed_jobs,
+        total_earnings,
     };
 
     Ok(Json(ApiResponse::success(
@@ -1340,10 +1381,38 @@ pub async fn get_employer_dashboard(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+    // Calculate completed jobs
+    let completed_jobs = sqlx::query_scalar::<Postgres, i32>(
+        r#"
+        SELECT COUNT(*) FROM jobs 
+        WHERE employer_id = $1 AND status = 'completed'::job_status
+        "#
+    )
+    .bind(auth.user.id)
+    .fetch_one(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Calculate total spent
+    let total_spent = sqlx::query_scalar::<Postgres, BigDecimal>(
+        r#"
+        SELECT COALESCE(SUM(amount), 0) FROM escrow_transactions 
+        WHERE employer_id = $1 AND status = 'completed'::payment_status
+        "#
+    )
+    .bind(auth.user.id)
+    .fetch_one(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?
+    .to_f64()
+    .unwrap_or(0.0);
+
     let dashboard = EmployerDashboard {
         posted_jobs,
         active_contracts,
         pending_applications,
+        completed_jobs: completed_jobs,
+        total_spent,
     };
 
     Ok(Json(ApiResponse::success(
@@ -1679,13 +1748,19 @@ pub struct WorkerDashboard {
     pub reviews: Vec<JobReview>,
     pub active_jobs: Vec<Job>,
     pub pending_applications: Vec<JobApplication>,
+    pub active_contracts: Vec<JobContract>,
+    pub completed_jobs: i32,
+    pub total_earnings: f64,
 }
+
 
 #[derive(Debug, serde::Serialize)]
 pub struct EmployerDashboard {
     pub posted_jobs: Vec<Job>,
     pub active_contracts: Vec<JobContract>,
     pub pending_applications: Vec<JobApplication>,
+    pub completed_jobs: i32,
+    pub total_spent: f64,
 }
 
 #[derive(Debug, serde::Serialize)]

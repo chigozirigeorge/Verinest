@@ -82,7 +82,6 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/workers/:worker_id", get(get_worker_details));
 
     // Protected labour routes (require auth)
-    // Protected labour routes (require auth)
 let protected_labour_routes = Router::new()
     .route("/worker/profile", post(crate::handler::labour::create_worker_profile))
     .route("/worker/profile", get(crate::handler::labour::get_worker_profile))
