@@ -1283,64 +1283,95 @@ pub async fn get_worker_dashboard(
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     let portfolio = app_state.db_client
-        .get_worker_portfolio(profile.id) // Use profile.id, not user_id
+        .get_worker_portfolio(profile.id) // ✅ Correct - uses profile.id
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     let reviews = app_state.db_client
-        .get_worker_reviews(auth.user.id)
+        .get_worker_reviews(auth.user.id) // ✅ Correct - uses user.id
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // Get active jobs
-    let active_jobs = app_state.db_client
-        .get_worker_active_jobs(profile.id) // Use profile.id
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+    // ❌ FIX THIS: Use auth.user.id consistently for jobs
+    let active_jobs = sqlx::query_as::<_, Job>(
+        r#"
+        SELECT 
+            id, employer_id, 
+            assigned_worker_id,
+            category,
+            title, description, 
+            location_state, location_city, location_address, 
+            budget,
+            estimated_duration_days, 
+            status, 
+            payment_status, 
+            escrow_amount, platform_fee,
+            partial_payment_allowed, 
+            partial_payment_percentage,
+            created_at, updated_at, 
+            deadline
+        FROM jobs 
+        WHERE assigned_worker_id = $1 AND status = 'in_progress'::job_status
+        ORDER BY created_at DESC
+        "#
+    )
+    .bind(profile.id) // ✅ Use profile.id since jobs.assigned_worker_id is profile_id
+    .fetch_all(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // Get pending applications
-    let pending_applications = app_state.db_client
-        .get_worker_pending_applications(profile.id) // Use profile.id
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+    // ❌ FIX THIS: Use profile.id consistently for applications
+    let pending_applications = sqlx::query_as::<_, JobApplication>(
+        r#"
+        SELECT id, job_id, worker_id, proposed_rate, estimated_completion, 
+        cover_letter, status, created_at
+        FROM job_applications 
+        WHERE worker_id = $1 AND status = 'pending'
+        ORDER BY created_at DESC
+        "#
+    )
+    .bind(profile.id) // ✅ Use profile.id since applications.worker_id is profile_id
+    .fetch_all(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // Get active contracts
+    // ❌ FIX THIS: Contracts use user.id, not profile.id
     let active_contracts = sqlx::query_as::<_, JobContract>(
         r#"
         SELECT * FROM job_contracts 
         WHERE worker_id = $1 AND status = 'active'::contract_status
         "#
     )
-    .bind(auth.user.id)
+    .bind(auth.user.id) // ✅ Correct - contracts.worker_id is user.id
     .fetch_all(&app_state.db_client.pool)
     .await
     .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // Calculate completed jobs
-        let completed_jobs = sqlx::query_scalar::<Postgres, i32>(
-            r#"
-            SELECT COUNT(*) FROM jobs 
-            WHERE assigned_worker_id = $1 AND status = 'completed'::job_status
-            "#
-        )
-        .bind(profile.id)
-        .fetch_one(&app_state.db_client.pool)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+    // ❌ FIX THIS: Use profile.id for completed jobs count
+    let completed_jobs = sqlx::query_scalar::<Postgres, i32>(
+        r#"
+        SELECT COUNT(*) FROM jobs 
+        WHERE assigned_worker_id = $1 AND status = 'completed'::job_status
+        "#
+    )
+    .bind(profile.id) // ✅ Use profile.id
+    .fetch_one(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-        // Calculate total earnings
-        let total_earnings = sqlx::query_scalar::<Postgres, BigDecimal>(
-            r#"
-            SELECT COALESCE(SUM(amount), 0) FROM escrow_transactions 
-            WHERE worker_id = $1 AND status = 'completed'::payment_status
-            "#
-        )
-        .bind(auth.user.id)
-        .fetch_one(&app_state.db_client.pool)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?
-        .to_f64()
-        .unwrap_or(0.0);
+    // ✅ Correct - escrow uses user.id
+    let total_earnings = sqlx::query_scalar::<Postgres, BigDecimal>(
+        r#"
+        SELECT COALESCE(SUM(amount), 0) FROM escrow_transactions 
+        WHERE worker_id = $1 AND status = 'completed'::payment_status
+        "#
+    )
+    .bind(auth.user.id)
+    .fetch_one(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?
+    .to_f64()
+    .unwrap_or(0.0);
 
     let dashboard = WorkerDashboard {
         profile,

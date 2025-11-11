@@ -371,6 +371,32 @@ pub async fn review_verification(
             .map_err(|e| HttpError::server_error(e.to_string()))?;
     }
 
+    if body.status == VerificationStatus::Rejected {
+        // Update user with verification data based on document type
+                app_state.db_client
+                    .update_user_verification_data(
+                        verification.user_id,
+                        VerificationStatus::Rejected,
+                        Some("".to_string()),
+                        VerificationType::NationalId,
+                        Some("".to_string()),
+                        Some("".to_string()),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await
+                    .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+        }
+
+        // Also update the general verification status
+        app_state.db_client
+            .update_user_verification_status(verification.user_id, VerificationStatus::Approved)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+
     Ok(Json(serde_json::json!({
         "status": "success",
         "message": "Verification reviewed successfully",
