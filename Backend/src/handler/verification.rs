@@ -376,7 +376,7 @@ pub async fn review_verification(
                 app_state.db_client
                     .update_user_verification_data(
                         verification.user_id,
-                        VerificationStatus::Unverified,
+                        VerificationStatus::Rejected,
                         Some("".to_string()),
                         VerificationType::NationalId,
                         Some("".to_string()),
@@ -393,7 +393,7 @@ pub async fn review_verification(
 
         // Also update the general verification status
         app_state.db_client
-            .update_user_verification_status(verification.user_id, VerificationStatus::Approved)
+            .update_user_verification_status(verification.user_id, VerificationStatus::Unverified)
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
 
