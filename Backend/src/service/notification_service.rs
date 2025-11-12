@@ -404,9 +404,12 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
-    db::{db::DBClient, userdb::UserExt}, mail::mails, models::{
+    db::{db::DBClient, userdb::UserExt}, mail::mails, 
+    models::{
         chatnodels::Message, labourmodel::*, 
-        vendormodels::{ServiceDispute, ServiceOrder, VendorService, SubscriptionTier}
+        vendormodels::{ServiceDispute, ServiceOrder, SubscriptionTier, VendorService}, 
+        verificationmodels::VerificationDocument,
+        usermodel::VerificationStatus,
     }
 };
 use crate::db::labourdb::LaborExt;
@@ -557,6 +560,59 @@ impl NotificationService {
                 &worker.email,
                 &worker.name,
                 &job.title,
+            ).await;
+        }
+        
+        Ok(())
+    }
+
+    pub async fn notify_verification_rejected(
+        &self,
+        verification: &VerificationDocument,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Ok(Some(user)) = self.db_client.get_user(Some(verification.user_id), None, None, None).await {
+            self.create_notification_with_email(
+                user.id,
+                "Verification request was Rejected".to_string(),
+                format!("Unfortunately Dear {:?}, your Verification request was rejected due to {:?}",&user.name, verification.review_notes),
+                "verification declined".to_string(),
+                Some(verification.user_id),
+                true, 
+            ).await?;
+            
+            // Send dedicated email
+            let _ = mails::send_verification_status_email(
+                &user.email, 
+                &user.username, 
+                &crate::models::usermodel::VerificationStatus::Rejected,
+                verification.review_notes.as_deref()
+            ).await;
+        }
+        
+        Ok(())
+    }
+
+
+    pub async fn notify_verification_accepted(
+        &self,
+        verification: &VerificationDocument,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Ok(Some(user)) = self.db_client.get_user(Some(verification.user_id), None, None, None).await {
+            self.create_notification_with_email(
+                user.id,
+                "Verification request was Rejected".to_string(),
+                format!("Dear {:?} your Verification request has been accepted and you have been granted access to explore our platform, Please ensure to leave your honest feedback to help us serve you better",user.name),
+                "verification declined".to_string(),
+                Some(verification.user_id),
+                true, 
+            ).await?;
+            
+            // Send dedicated email
+            let _ = mails::send_verification_status_email(
+                &user.email, 
+                &user.username, 
+                &crate::models::usermodel::VerificationStatus::Approved,
+                verification.review_notes.as_deref()
             ).await;
         }
         

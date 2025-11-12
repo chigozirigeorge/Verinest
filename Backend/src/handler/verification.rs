@@ -272,7 +272,6 @@ pub async fn get_pending_verifications(
     })))
 }
 
-// In verification.rs - Update the review_verification function
 pub async fn review_verification(
     Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth): Extension<JWTAuthMiddeware>,
@@ -326,7 +325,6 @@ pub async fn review_verification(
 
     // If approved, update user verification status AND populate user data
     if body.status == VerificationStatus::Approved {
-        // Update user with verification data based on document type
         match verification.document_type {
             VerificationType::NationalId => {
                 app_state.db_client
@@ -369,6 +367,14 @@ pub async fn review_verification(
             .update_user_verification_status(verification.user_id, VerificationStatus::Approved)
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+       match app_state.notification_service.notify_verification_accepted(&verification)
+        .await{
+            Ok(_) => tracing::info!("verification notification sent to {}", &verification.user_id),
+            Err(e) => tracing::error!("Failed to notify verification request: {:?}", e),
+        };
+
+        
     }
 
     if body.status == VerificationStatus::Rejected {
@@ -388,6 +394,13 @@ pub async fn review_verification(
                     )
                     .await
                     .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+            match app_state.notification_service.notify_verification_rejected(
+                &verification
+            ).await{
+            Ok(_) => tracing::info!("verification notification sent to {}", &verification.user_id),
+            Err(e) => tracing::error!("Failed to notify verification request: {:?}", e),
+            };
 
         }
 

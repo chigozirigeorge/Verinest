@@ -475,9 +475,12 @@ impl VendorOrderService {
         tx.commit().await?;
         
         // Notify both parties
-        let _ = self.notification_service
+        match self.notification_service
             .notify_service_dispute_created(raised_by, against, &dispute)
-            .await;
+            .await {
+            Ok(_) => tracing::info!("Dispute notification sent to {} and {}", raised_by, against),
+            Err(e) => tracing::error!("Failed to notify dispute: {:?}", e),
+        }
         
         Ok(dispute)
     }
