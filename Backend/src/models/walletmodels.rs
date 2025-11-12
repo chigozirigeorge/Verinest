@@ -24,7 +24,9 @@ pub enum TransactionType {
     Bonus,
     Referral,
     Penalty,
-    ServiceDelivery
+    ServiceDelivery,
+    ServicePayment,
+    Refund,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, sqlx::Type, PartialEq)]

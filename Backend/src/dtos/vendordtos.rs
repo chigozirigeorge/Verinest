@@ -61,3 +61,35 @@ pub struct ConfirmDeliveryDto {
     pub rating: Option<i32>,
     pub review_comment: Option<String>,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum DisputeResolution {
+    #[serde(rename = "full_refund")]
+    FullRefund,
+    
+    #[serde(rename = "partial_refund")]
+    PartialRefund {
+        /// Percentage to refund to buyer (1-100)
+        percentage: u32,
+    },
+    
+    #[serde(rename = "dismissed")]
+    Dismissed,
+}
+
+#[derive(Debug, Serialize, Deserialize, Validate)]
+pub struct CreateServiceDisputeDto {
+    pub order_id: Uuid,
+    pub reason: String,
+    
+    #[validate(length(min = 10, message = "Description must be at least 10 characters"))]
+    pub description: String,
+    
+    pub evidence_urls: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SettleDisputeDto {
+    pub dispute_id: Uuid,
+    pub resolution: DisputeResolution,
+}

@@ -1,25 +1,19 @@
 use std::sync::Arc;
 use uuid::Uuid;
-use chrono::Utc;
+use chrono;
 use sqlx::types::BigDecimal;
 use num_traits::ToPrimitive;
 
 use crate::{
     db::{
-        db::DBClient,
-        vendordb::VendorExt,
-        naira_walletdb::NairaWalletExt,
-    },
-    models::{
-        vendormodels::*,
-        walletmodels::*,
-    },
-    dtos::vendordtos::*,
-    service::{
+        db::DBClient, naira_walletdb::NairaWalletExt, userdb::UserExt, vendordb::VendorExt
+    }, dtos::vendordtos::*, models::{
+        usermodel::VerificationStatus, vendormodels::*, walletmodels::*
+    }, service::{
         error::ServiceError,
         notification_service::NotificationService,
 
-    },
+    }
 };
 
 pub struct VendorOrderService {
@@ -60,13 +54,33 @@ impl VendorOrderService {
             return Err(ServiceError::Validation("Insufficient stock".to_string()));
         }
         
-        // 2. Get vendor profile
+        // 2. Get vendor profile and validate
         let vendor = self.db_client
             .get_vendor_profile_by_id(service.vendor_id)
             .await?
             .ok_or_else(|| ServiceError::Validation("Vendor not found".to_string()))?;
         
-        // 3. Calculate costs
+        // Validate vendor subscription is active (expires_at must be in future)
+        if let Some(expires_at) = vendor.subscription_expires_at {
+            let now = chrono::Utc::now();
+            if expires_at < now {
+                return Err(ServiceError::Validation(
+                    "Vendor subscription has expired. Please renew your subscription to sell services.".to_string()
+                ));
+            }
+        } else {
+            return Err(ServiceError::Validation(
+                "Vendor subscription not found or not active.".to_string()
+            ));
+        }
+        
+        // 4. Validate buyer wallet exists and check balance first
+        let buyer_wallet = self.db_client
+            .get_naira_wallet(buyer_id)
+            .await?
+            .ok_or_else(|| ServiceError::Validation("Buyer wallet not found".to_string()))?;
+        
+        // 5. Calculate costs
         let unit_price = service.price.to_f64().unwrap_or(0.0);
         let subtotal = unit_price * dto.quantity as f64;
         let platform_fee = subtotal * 0.03; // 3% platform fee
@@ -80,6 +94,16 @@ impl VendorOrderService {
                     return Err(ServiceError::Validation(
                         "Delivery address and state required for cross-state delivery".to_string()
                     ));
+                }
+                
+                // Validate buyer identity for cross-state delivery
+                let buyer = self.db_client
+                    .get_user(Some(buyer_id), None, None, None)
+                    .await?
+                    .ok_or_else(|| ServiceError::Validation("Buyer not found".to_string()))?;
+                
+                if buyer.verification_status != Some(VerificationStatus::Approved){
+                    return Err(ServiceError::Validation("Buyer account must be verified for cross-state delivery".to_string()));
                 }
                 
                 // Calculate delivery fee based on distance/state
@@ -102,21 +126,16 @@ impl VendorOrderService {
             (subtotal, 0.0) // Local pickup - vendor gets everything immediately
         };
         
-        // 4. Check buyer's wallet balance
-        let buyer_wallet = self.db_client
-            .get_naira_wallet(buyer_id)
-            .await?
-            .ok_or_else(|| ServiceError::Validation("Buyer wallet not found".to_string()))?;
-        
+        // 6. Check buyer's wallet balance
         let total_amount_kobo = naira_to_kobo(total_amount);
         if buyer_wallet.available_balance < total_amount_kobo {
             return Err(ServiceError::Validation("Insufficient wallet balance".to_string()));
         }
         
-        // 5. Generate order number
+        // 7. Generate order number
         let order_number = format!("ORD-{}", uuid::Uuid::new_v4().to_string()[..8].to_uppercase());
         
-        // 6. Create order
+        // 8. Create order
         let order = sqlx::query_as::<_, ServiceOrder>(
             r#"
             INSERT INTO service_orders (
@@ -153,12 +172,12 @@ impl VendorOrderService {
         .fetch_one(&mut *tx)
         .await?;
         
-        // 7. Debit buyer's wallet
-        let _ = self.db_client
+        // 9. Debit buyer's wallet - THIS HOLDS THE FUNDS IN ESCROW
+        let _wallet_tx = self.db_client
             .debit_wallet(
                 buyer_id,
                 total_amount_kobo,
-                TransactionType::JobPayment, // Or create ServicePayment variant
+                TransactionType::ServicePayment, // ✅ Use ServicePayment
                 format!("Purchase: {}", service.title),
                 order_number.clone(),
                 None,
@@ -166,30 +185,36 @@ impl VendorOrderService {
                     "order_id": order.id,
                     "service_id": service.id,
                     "vendor_id": vendor.id,
+                    "type": "escrow_hold"
                 })),
             )
             .await?;
+
+        tracing::info!("✓ Escrow hold created for order {}: {:.2} ₦", order.order_number, total_amount);
         
-        // 8. Credit vendor with immediate amount (delivery fee for cross-state, full amount for local)
-        if vendor_immediate_amount > 0.0 {
-            let vendor_amount_kobo = naira_to_kobo(vendor_immediate_amount);
-            let _ = self.db_client
-                .credit_wallet(
-                    vendor.user_id,
-                    vendor_amount_kobo,
-                    TransactionType::JobPayment,
-                    format!("Service sale: {}", service.title),
-                    format!("VENDOR_{}", order_number),
-                    None,
-                    Some(serde_json::json!({
-                        "order_id": order.id,
-                        "type": if delivery_type == DeliveryType::CrossStateDelivery { "delivery_fee" } else { "full_payment" }
-                    })),
-                )
-                .await?;
-        }
+        // 10. Create escrow transaction record (HELD state - funds are locked)
+        sqlx::query(
+            r#"
+            INSERT INTO escrow_transactions (
+                order_id, service_id, vendor_id, buyer_id,
+                total_amount, platform_fee, vendor_amount, held_amount,
+                status, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'held', NOW())
+            "#
+        )
+        .bind(order.id)
+        .bind(service.id)
+        .bind(vendor.id)
+        .bind(buyer_id)
+        .bind(BigDecimal::try_from(total_amount).unwrap())
+        .bind(BigDecimal::try_from(platform_fee).unwrap())
+        .bind(BigDecimal::try_from(vendor_immediate_amount).unwrap())
+        .bind(BigDecimal::try_from(held_amount).unwrap())
+        .execute(&mut *tx)
+        .await?;
         
-        // 9. Update service stock
+        // 11. Update service stock
         sqlx::query(
             "UPDATE vendor_services SET stock_quantity = stock_quantity - $1 WHERE id = $2"
         )
@@ -198,7 +223,7 @@ impl VendorOrderService {
         .execute(&mut *tx)
         .await?;
         
-        // 10. Update order status to paid
+        // 12. Update order status to paid
         let updated_order = sqlx::query_as::<_, ServiceOrder>(
             "UPDATE service_orders SET status = 'paid', paid_at = NOW() WHERE id = $1 RETURNING *"
         )
@@ -208,10 +233,12 @@ impl VendorOrderService {
         
         tx.commit().await?;
         
-        // 11. Send notifications
-        let _ = self.notification_service
+        // 13. Send notifications
+        if let Err(e) = self.notification_service
             .notify_service_purchase(vendor.user_id, buyer_id, &service, &updated_order)
-            .await;
+            .await {
+            tracing::error!("Failed to send purchase notification: {:?}", e);
+        }
         
         Ok(ServiceOrderResponse {
             order: updated_order,
@@ -232,7 +259,7 @@ impl VendorOrderService {
         })
     }
     
-    /// Calculate delivery fee based on origin and destination states
+    
     async fn calculate_delivery_fee(
         &self,
         origin_state: &str,
@@ -240,11 +267,11 @@ impl VendorOrderService {
     ) -> Result<f64, ServiceError> {
         // Simple distance-based calculation (you can make this more sophisticated)
         if origin_state == destination_state {
-            Ok(0.0) // Same state, no cross-state delivery
+            Ok(2500.0) // Same state, no cross-state delivery
         } else {
             // Base delivery fee + distance multiplier
             // You could use a state distance matrix or API here
-            Ok(2500.0) // Fixed â‚¦2,500 for cross-state delivery
+            Ok(7500.0) // Fixed â‚¦2,500 for cross-state delivery
         }
     }
     
@@ -291,13 +318,26 @@ impl VendorOrderService {
                 .credit_wallet(
                     vendor.user_id,
                     held_amount_kobo,
-                    TransactionType::JobPayment,
+                    TransactionType::ServicePayment, // ✅ Use ServicePayment
                     format!("Delivery confirmed: Order {}", order.order_number),
                     format!("DELIVERY_CONF_{}", order.id),
                     None,
-                    Some(serde_json::json!({"order_id": order.id})),
+                    Some(serde_json::json!({
+                        "order_id": order.id,
+                        "type": "escrow_release"
+                    })),
                 )
                 .await?;
+
+            tracing::info!("✓ Escrow released for order {}: {:.2} ₦", order.order_number, held_amount_f64);
+
+            // Update escrow status
+            sqlx::query(
+                "UPDATE escrow_transactions SET status = 'released', released_at = NOW() WHERE order_id = $1"
+            )
+            .bind(order.id)
+            .execute(&mut *tx)
+            .await?;
         }
         
         // Update order status
@@ -325,7 +365,7 @@ impl VendorOrderService {
             
             let _ = self.db_client
                 .create_service_review(
-                    order.service_id,
+                    service.id,
                     order.vendor_id,
                     Some(order.id),
                     buyer_id,
@@ -346,9 +386,11 @@ impl VendorOrderService {
             .await?
             .ok_or_else(|| ServiceError::Validation("Vendor not found".to_string()))?;
         
-        let _ = self.notification_service
+        if let Err(e) = self.notification_service
             .notify_delivery_confirmed(vendor.user_id, &updated_order)
-            .await;
+            .await {
+            tracing::error!("Failed to send delivery confirmation notification: {:?}", e);
+        }
         
         Ok(updated_order)
     }
@@ -514,5 +556,188 @@ impl VendorOrderService {
         }
         
         Ok(())
+    }
+    
+    /// Handle dispute resolution with partial or full refund
+    pub async fn settle_dispute(
+        &self,
+        dispute_id: Uuid,
+        admin_id: Uuid,
+        resolution: DisputeResolution,
+    ) -> Result<ServiceDispute, ServiceError> {
+        let mut tx = self.db_client.pool.begin().await?;
+        
+        // Get dispute
+        let dispute = sqlx::query_as::<_, ServiceDispute>(
+            "SELECT * FROM service_disputes WHERE id = $1"
+        )
+        .bind(dispute_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| ServiceError::Validation("Dispute not found".to_string()))?;
+        
+        // Get order for fund calculations
+        let order = self.db_client
+            .get_order_by_id(dispute.order_id)
+            .await?
+            .ok_or_else(|| ServiceError::Validation("Order not found".to_string()))?;
+        
+        let _buyer = self.db_client
+            .get_user(Some(order.buyer_id), None, None, None)
+            .await?
+            .ok_or_else(|| ServiceError::Validation("Buyer not found".to_string()))?;
+        
+        let vendor = self.db_client
+            .get_vendor_profile_by_id(order.vendor_id)
+            .await?
+            .ok_or_else(|| ServiceError::Validation("Vendor not found".to_string()))?;
+        
+        match resolution {
+            DisputeResolution::FullRefund => {
+                // Refund 100% to buyer, release no funds to vendor
+                let order_amount_kobo = (order.total_amount.to_f64().unwrap_or(0.0) * 100.0) as i64;
+                
+                self.db_client
+                    .credit_wallet(
+                        order.buyer_id,
+                        order_amount_kobo,
+                        TransactionType::Refund,
+                        format!("Dispute refund: Order {}", order.order_number),
+                        format!("DISPUTE_REFUND_{}", dispute_id),
+                        None,
+                        Some(serde_json::json!({
+                            "order_id": order.id,
+                            "dispute_id": dispute_id,
+                            "type": "dispute_refund"
+                        })),
+                    )
+                    .await?;
+                
+                tracing::info!("✓ Full refund issued to buyer {} for order {}", order.buyer_id, order.order_number);
+            }
+            
+            DisputeResolution::PartialRefund { percentage } => {
+                // Validate percentage
+                if percentage <= 0 || percentage > 100 {
+                    return Err(ServiceError::Validation("Refund percentage must be between 1-100".to_string()));
+                }
+                
+                // Calculate amounts
+                let order_amount_f64 = order.total_amount.to_f64().unwrap_or(0.0);
+                let refund_amount = (order_amount_f64 * (percentage as f64 / 100.0)) as i64;
+                let vendor_amount = (order_amount_f64 * ((100 - percentage) as f64 / 100.0)) as i64;
+                
+                // Refund percentage to buyer
+                self.db_client
+                    .credit_wallet(
+                        order.buyer_id,
+                        refund_amount as i64,
+                        TransactionType::Refund,
+                        format!("Partial refund ({}%): Order {}", percentage, order.order_number),
+                        format!("PARTIAL_REFUND_{}_{}", dispute_id, percentage),
+                        None,
+                        Some(serde_json::json!({
+                            "order_id": order.id,
+                            "dispute_id": dispute_id,
+                            "refund_percentage": percentage,
+                            "type": "partial_dispute_refund"
+                        })),
+                    )
+                    .await?;
+                
+                // Release remaining amount to vendor
+                self.db_client
+                    .credit_wallet(
+                        vendor.user_id,
+                        vendor_amount as i64,
+                        TransactionType::ServicePayment,
+                        format!("Partial payment after dispute ({}%): Order {}", 100 - percentage, order.order_number),
+                        format!("DISPUTE_VENDOR_PAY_{}", dispute_id),
+                        None,
+                        Some(serde_json::json!({
+                            "order_id": order.id,
+                            "dispute_id": dispute_id,
+                            "vendor_percentage": 100 - percentage,
+                            "type": "dispute_partial_release"
+                        })),
+                    )
+                    .await?;
+                
+                tracing::info!("✓ Partial refund settled: {}% to buyer, {}% to vendor for order {}", 
+                    percentage, 100 - percentage, order.order_number);
+            }
+            
+            DisputeResolution::Dismissed => {
+                // Release full held amount to vendor
+                if let Some(held_amount) = order.delivery_amount_held {
+                    let held_amount_kobo = (held_amount.to_f64().unwrap_or(0.0) * 100.0) as i64;
+                    
+                    self.db_client
+                        .credit_wallet(
+                            vendor.user_id,
+                            held_amount_kobo,
+                            TransactionType::ServicePayment,
+                            format!("Dispute dismissed: Order {}", order.order_number),
+                            format!("DISPUTE_DISMISSED_{}", dispute_id),
+                            None,
+                            Some(serde_json::json!({
+                                "order_id": order.id,
+                                "dispute_id": dispute_id,
+                                "type": "dispute_dismissed_release"
+                            })),
+                        )
+                        .await?;
+                    
+                    tracing::info!("✓ Dispute dismissed, full escrow released to vendor for order {}", order.order_number);
+                }
+            }
+        }
+        
+        // Update dispute status
+        let updated_dispute = sqlx::query_as::<_, ServiceDispute>(
+            r#"
+            UPDATE service_disputes 
+            SET status = 'resolved',
+                resolved_at = NOW(),
+                resolution_notes = $2,
+                resolved_by = $3
+            WHERE id = $1
+            RETURNING *
+            "#
+        )
+        .bind(dispute_id)
+        .bind(serde_json::to_string(&resolution).unwrap_or_default())
+        .bind(admin_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        
+        // Update order status
+        sqlx::query("UPDATE service_orders SET status = 'disputed' WHERE id = $1")
+            .bind(order.id)
+            .execute(&mut *tx)
+            .await?;
+        
+        // Update escrow transaction
+        sqlx::query(
+            "UPDATE escrow_transactions SET status = 'settled', settled_at = NOW() WHERE order_id = $1"
+        )
+        .bind(order.id)
+        .execute(&mut *tx)
+        .await?;
+        
+        tx.commit().await?;
+        
+        // Notify both parties of dispute resolution
+        let _ = self.notification_service
+            .notify_service_dispute_created(
+                admin_id,
+                order.buyer_id,
+                &updated_dispute,
+            )
+            .await;
+        
+        tracing::info!("✓ Dispute {} resolved with {:?}", dispute_id, resolution);
+        
+        Ok(updated_dispute)
     }
 }

@@ -255,106 +255,6 @@ pub async fn upgrade_subscription(
     })))
 }
 
-// pub async fn create_order_review(
-//     Extension(app_state): Extension<Arc<AppState>>,
-//     Extension(auth): Extension<JWTAuthMiddeware>,
-//     Path(order_id): Path<Uuid>,
-//     Json(body): Json<CreateReviewDto>,
-// ) -> Result<impl IntoResponse, HttpError> {
-//     body.validate()
-//         .map_err(|e| HttpError::bad_request(e.to_string()))?;
-    
-//     let order = app_state.db_client
-//         .get_order_by_id(order_id)
-//         .await?
-//         .ok_or_else(|| HttpError::not_found("Order not found"))?;
-    
-//     if order.buyer_id != auth.user.id {
-//         return Err(HttpError::unauthorized("Only buyer can review"));
-//     }
-    
-//     // FIX: Check against OrderStatus enum
-//     if order.status != Some(OrderStatus::Completed) {
-//         return Err(HttpError::bad_request("Can only review completed orders"));
-//     }
-    
-//     let review = app_state.db_client
-//         .create_service_review(
-//             order.service_id,
-//             order.vendor_id,
-//             Some(order_id),
-//             auth.user.id,
-//             body.rating,
-//             body.comment,
-//         )
-//         .await?;
-    
-//     // Update service rating
-//     let _ = app_state.db_client
-//         .update_service_rating(order.service_id)
-//         .await;
-    
-//     Ok(Json(serde_json::json!({
-//         "status": "success",
-//         "message": "Review submitted successfully",
-//         "data": review
-//     })))
-// }
-
-// pub async fn create_service(
-//     Extension(app_state): Extension<Arc<AppState>>,
-//     Extension(auth): Extension<JWTAuthMiddeware>,
-//     Json(body): Json<CreateServiceDto>,
-// ) -> Result<impl IntoResponse, HttpError> {
-//     body.validate()
-//         .map_err(|e| HttpError::bad_request(e.to_string()))?;
-    
-//     let profile = app_state.db_client
-//         .get_vendor_profile_by_user(auth.user.id)
-//         .await
-//         .map_err(|e| HttpError::server_error(e.to_string()))?
-//         .ok_or_else(|| HttpError::not_found("Vendor profile not found. Create vendor profile first."))?;
-    
-//     // Check if subscription is active
-//     let is_active = app_state.db_client
-//         .check_subscription_active(profile.id)
-//         .await
-//         .map_err(|e| HttpError::server_error(e.to_string()))?;
-    
-//     if !is_active {
-//         return Err(HttpError::bad_request("Subscription expired. Please renew your subscription."));
-//     }
-    
-//     // Check service count limits (will be enforced by DB trigger)
-//     let service = app_state.db_client
-//         .create_service(
-//             profile.id,
-//             body.title,
-//             body.description,
-//             body.category,
-//             body.price,
-//             body.images,
-//             body.location_state,
-//             body.location_city,
-//             body.tags,
-//         )
-//         .await
-//         .map_err(|e| {
-//             if e.to_string().contains("allows maximum") {
-//                 HttpError::bad_request(e.to_string())
-//             } else {
-//                 HttpError::server_error(e.to_string())
-//             }
-//         })?;
-    
-//     Ok(Json(serde_json::json!({
-//         "status": "success",
-//         "message": "Service created successfully",
-//         "data": service
-//     })))
-// }
-
-// Service Management Handlers
 pub async fn create_service(
     Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth): Extension<JWTAuthMiddeware>,
@@ -996,7 +896,7 @@ pub async fn initiate_purchase(
             .debit_wallet(
                 auth.user.id,
                 total_kobo,
-                crate::models::walletmodels::TransactionType::JobPayment,
+                crate::models::walletmodels::TransactionType::ServicePayment,
                 format!("Purchase: {}", service.title),
                 payment_reference.clone(),
                 None,
@@ -1307,7 +1207,7 @@ pub async fn complete_order(
         .credit_wallet(
             vendor.user_id,
             vendor_amount_kobo,
-            crate::models::walletmodels::TransactionType::JobPayment,
+            crate::models::walletmodels::TransactionType::ServicePayment,
             format!("Sale: Order {}", order.order_number),
             format!("VENDOR_PAY_{}", order.id),
             None,

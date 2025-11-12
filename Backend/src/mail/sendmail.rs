@@ -1,58 +1,10 @@
-// //10
-// use std::{env, fs};
-// use lettre::{
-//     message::{header, SinglePart},
-//     transport::smtp::authentication::Credentials,
-//     Message, SmtpTransport,
-//     Transport,
-// };
-
-// pub async fn send_email(
-//     to_email: &str,
-//     subject: &str,
-//     template_path: &str,
-//     placeholders: &[(String, String)]
-// ) -> Result<(), Box<dyn std::error::Error>> {
-//     let smtp_username = env::var("SMTP_USERNAME")?;
-//     let smtp_password = env::var("SMTP_PASSWORD")?;
-//     let smtp_server = env::var("SMTP_SERVER")?;
-//     let smtp_port: u16 = env::var("SMTP_PORT")?.parse()?;
-
-//     let mut html_template = fs::read_to_string(template_path)?;
-
-//     for (key, value) in placeholders {
-//         html_template = html_template.replace(key, value)
-//     }
-
-//     let email = Message::builder()
-//         .from(smtp_username.parse()?)
-//         .to(to_email.parse()?)
-//         .subject(subject)
-//         .header(header::ContentType::TEXT_HTML)
-//         .singlepart(SinglePart::builder()
-//             .header(header::ContentType::TEXT_HTML)
-//             .body(html_template)
-//         )?;
-
-//     let creds = Credentials::new(smtp_username.clone(), smtp_password.clone());
-//     let mailer = SmtpTransport::starttls_relay(&smtp_server)?
-//         .credentials(creds)
-//         .port(smtp_port)
-//         .build();
-    
-//     let result = mailer.send(&email);
-
-//     match result {
-//         Ok(_) => println!("Email sent successfully!"),
-//         Err(e) => println!("Failed to send email: {:?}", e),
-//     }
-
-//     Ok(())
-// }
-
 use std::fs;
 use serde_json::json;
 use reqwest;
+use tokio::time::{sleep, Duration};
+
+const MAX_RETRIES: u32 = 3;
+const RETRY_DELAY_MS: u64 = 1000;
 
 pub async fn send_email(
     to_email: &str,
@@ -60,60 +12,124 @@ pub async fn send_email(
     template_path: &str,
     placeholders: &[(String, String)]
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Clone data for the background task
-    let to_email = to_email.to_string();
-    let subject = subject.to_string();
-    let template_path = template_path.to_string();
-    let placeholders = placeholders.to_vec();
-
-    // Spawn background task
-    tokio::task::spawn(async move {
-        match actual_email_send(&to_email, &subject, &template_path, &placeholders).await {
-            Ok(_) => println!("✓ Email sent in background"),
-            Err(e) => eprintln!("✗ Background email failed: {}", e),
-        }
-    });
-
-    Ok(())
-}
-
-async fn actual_email_send(
-    to_email: &str,
-    subject: &str,
-    template_path: &str,
-    placeholders: &[(String, String)]
-) -> Result<(), Box<dyn std::error::Error>> {
-    let resend_api_key = std::env::var("RESEND_API_KEY")?;
-    let from_email = std::env::var("FROM_EMAIL").unwrap_or_else(|_| "Verinest <noreply@verinest.com>".to_string());
+    // Validate inputs
+    if to_email.is_empty() {
+        return Err("Email recipient cannot be empty".into());
+    }
+    if !to_email.contains('@') {
+        return Err(format!("Invalid email address: {}", to_email).into());
+    }
 
     // Read and process template
-    let mut html_template = fs::read_to_string(template_path)?;
+    let mut html_template = match fs::read_to_string(template_path) {
+        Ok(content) => content,
+        Err(e) => {
+            tracing::error!("Failed to read email template {}: {}", template_path, e);
+            return Err(format!("Template not found: {}", template_path).into());
+        }
+    };
+
     for (key, value) in placeholders {
         html_template = html_template.replace(key, value);
     }
 
-    // Prepare Resend API request
+    // Send with retries
+    send_with_retries(to_email, subject, &html_template).await
+}
+
+async fn send_with_retries(
+    to_email: &str,
+    subject: &str,
+    html_body: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut last_error = None;
+
+    for attempt in 1..=MAX_RETRIES {
+        match send_via_resend(to_email, subject, html_body).await {
+            Ok(email_id) => {
+                tracing::info!(
+                    "✓ Email sent successfully to {} (id: {})",
+                    to_email,
+                    email_id
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < MAX_RETRIES {
+                    let delay = RETRY_DELAY_MS * (2_u64.pow(attempt - 1)); // Exponential backoff
+                    tracing::warn!(
+                        "Email send attempt {} failed for {}. Retrying in {}ms...",
+                        attempt,
+                        to_email,
+                        delay
+                    );
+                    sleep(Duration::from_millis(delay)).await;
+                }
+            }
+        }
+    }
+
+    let error_msg = last_error
+        .map(|e| format!("Failed after {} retries: {}", MAX_RETRIES, e))
+        .unwrap_or_else(|| "Unknown email sending error".to_string());
+
+    tracing::error!("✗ Email failed for {}: {}", to_email, error_msg);
+    Err(error_msg.into())
+}
+
+async fn send_via_resend(
+    to_email: &str,
+    subject: &str,
+    html_body: &str,
+) -> Result<String, String> {
+    let resend_api_key = std::env::var("RESEND_API_KEY")
+        .map_err(|_| "RESEND_API_KEY environment variable not set".to_string())?;
+
+    let from_email = std::env::var("FROM_EMAIL")
+        .unwrap_or_else(|_| "Verinest <noreply@verinest.com>".to_string());
+
+    // Validate API key format
+    if resend_api_key.is_empty() {
+        return Err("RESEND_API_KEY is empty".to_string());
+    }
+
     let client = reqwest::Client::new();
+    let request_body = json!({
+        "from": from_email,
+        "to": to_email,
+        "subject": subject,
+        "html": html_body,
+    });
+
     let response = client
         .post("https://api.resend.com/emails")
         .header("Authorization", format!("Bearer {}", resend_api_key))
         .header("Content-Type", "application/json")
-        .json(&json!({
-            "from": from_email,
-            "to": to_email,
-            "subject": subject,
-            "html": html_template,
-        }))
+        .json(&request_body)
         .send()
-        .await?;
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
 
-    if response.status().is_success() {
-        println!("Email sent successfully via Resend!");
+    let status = response.status();
+    let response_text = response
+        .text()
+        .await
+        .unwrap_or_else(|_| "No response body".to_string());
+
+    if status.is_success() {
+        // Extract email ID from response
+        if let Ok(body) = serde_json::from_str::<serde_json::Value>(&response_text) {
+            if let Some(id) = body.get("id").and_then(|v| v.as_str()) {
+                return Ok(id.to_string());
+            }
+        }
+        Ok("success".to_string())
     } else {
-        let error_text = response.text().await?;
-        println!("Failed to send email via Resend: {}", error_text);
-        return Err(format!("Resend API error: {}", error_text).into());
+        Err(format!(
+            "Resend API error ({}): {}",
+            status.as_u16(),
+            response_text
+        ))
     }
-
-    Ok(())
 }

@@ -6,6 +6,7 @@ use crate::{models::{
 }
 };
 
+/// Send verification email with proper error handling
 pub async fn send_verification_email(
     to_email: &str,
     username: &str,
@@ -13,7 +14,7 @@ pub async fn send_verification_email(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let subject = "Email Verification";
     let template_path = "src/mail/templates/Verification-email.html";
-    let base_url = "verinest.up.railway.app/api/auth/verify";
+    let base_url = "https://verinest.up.railway.app/api/auth/verify";
     let verification_link = create_verification_link(base_url, token);
     let placeholders = vec![
         ("{{username}}".to_string(), username.to_string()),
