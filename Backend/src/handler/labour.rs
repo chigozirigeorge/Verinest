@@ -1346,7 +1346,7 @@ pub async fn get_worker_dashboard(
     .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     // ❌ FIX THIS: Use profile.id for completed jobs count
-    let completed_jobs = sqlx::query_scalar::<Postgres, i32>(
+    let completed_jobs = sqlx::query_scalar::<Postgres, i64>(
         r#"
         SELECT COUNT(*) FROM jobs 
         WHERE assigned_worker_id = $1 AND status = 'completed'::job_status
@@ -1411,7 +1411,7 @@ pub async fn get_employer_dashboard(
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     // Calculate completed jobs
-    let completed_jobs = sqlx::query_scalar::<Postgres, i32>(
+    let completed_jobs = sqlx::query_scalar::<Postgres, i64>(
         r#"
         SELECT COUNT(*) FROM jobs 
         WHERE employer_id = $1 AND status = 'completed'::job_status
@@ -1778,7 +1778,7 @@ pub struct WorkerDashboard {
     pub active_jobs: Vec<Job>,
     pub pending_applications: Vec<JobApplication>,
     pub active_contracts: Vec<JobContract>,
-    pub completed_jobs: i32,
+    pub completed_jobs: i64,
     pub total_earnings: f64,
 }
 
@@ -1788,7 +1788,7 @@ pub struct EmployerDashboard {
     pub posted_jobs: Vec<Job>,
     pub active_contracts: Vec<JobContract>,
     pub pending_applications: Vec<JobApplication>,
-    pub completed_jobs: i32,
+    pub completed_jobs: i64,
     pub total_spent: f64,
 }
 

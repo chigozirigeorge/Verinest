@@ -401,7 +401,7 @@ pub struct WorkerProfile {
     pub location_city: String,
     pub is_available: Option<bool>,
     pub rating: Option<f32>,
-    pub completed_jobs: Option<i32>,
+    pub completed_jobs: Option<i64>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }

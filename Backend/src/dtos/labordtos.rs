@@ -45,7 +45,7 @@ pub struct WorkerProfileResponseDto {
     pub location_city: String,
     pub is_available: bool,
     pub rating: f32,
-    pub completed_jobs: i32,
+    pub completed_jobs: i64,
     pub portfolio: Vec<PortfolioItemDto>,
     pub reviews: Vec<ReviewDto>,
     pub created_at: DateTime<Utc>
@@ -149,7 +149,7 @@ pub struct WorkerInfoDto {
     pub email: String,
     pub category: WorkerCategory,
     pub rating: f32,
-    pub completed_jobs: i32,
+    pub completed_jobs: i64,
     pub trust_score: i32,
 }
 
@@ -368,7 +368,7 @@ pub struct WorkerDashBoardDto {
     pub profile: WorkerProfileResponseDto,
     pub active_jobs: Vec<JobResponseDto>,
     pub job_applications: Vec<JobApplicationResponse>,
-    pub completed_jobs_count: i32,
+    pub completed_jobs_count: i64,
     pub total_earnings: f64,
     pub average_rating: f32,
     pub trust_points: i32,
@@ -378,7 +378,7 @@ pub struct WorkerDashBoardDto {
 pub struct EmployerDashBoardDto {
     pub user_info: EmployerInfoDto,
     pub active_jobs: Vec<JobResponseDto>,
-    pub completed_jobs_count: i32,
+    pub completed_jobs_count: i64,
     pub total_spent: f64,
     pub trust_points: i32,
 }
@@ -544,7 +544,7 @@ pub struct WorkerProfileApplicationResponse {
     pub location_city: String,
     pub is_available: bool,
     pub rating: f32,
-    pub completed_jobs: i32,
+    pub completed_jobs: i64,
     pub skills: Vec<String>,
 }
 
