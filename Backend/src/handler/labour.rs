@@ -1324,7 +1324,7 @@ pub async fn get_worker_dashboard(
         SELECT id, job_id, worker_id, proposed_rate, estimated_completion, 
         cover_letter, status, created_at
         FROM job_applications 
-        WHERE worker_id = $1 AND status = 'pending'
+        WHERE worker_id = $1 AND status = 'applied'
         ORDER BY created_at DESC
         "#
     )

@@ -1524,7 +1524,7 @@ async fn get_jobs_by_location_and_category(
             ja.cover_letter, ja.status, ja.created_at
             FROM job_applications ja
             INNER JOIN jobs j ON ja.job_id = j.id
-            WHERE j.employer_id = $1 AND ja.status = 'pending'
+            WHERE j.employer_id = $1 AND ja.status = 'applied'
             ORDER BY ja.created_at DESC
             "#
         )
@@ -1590,7 +1590,7 @@ async fn get_jobs_by_location_and_category(
             SELECT id, job_id, worker_id, proposed_rate, estimated_completion, 
             cover_letter, status, created_at
             FROM job_applications 
-            WHERE worker_id = $1 AND status = 'pending'
+            WHERE worker_id = $1 AND status = 'applied'
             ORDER BY created_at DESC
             "#
         )
