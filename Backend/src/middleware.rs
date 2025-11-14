@@ -59,7 +59,23 @@ pub async fn auth(
             }
         };
 
-    let user_id = uuid::Uuid::parse_str(&token_details.to_string())
+    // ✅ FIX #6: Check if token is blacklisted (user logged out)
+    if let Some(redis_client) = &app_state.db_client.redis_client {
+        let blacklist_key = format!("token_blacklist:{}", token_details);
+        let mut conn = redis_client.lock().await;
+        
+        let is_blacklisted: bool = redis::cmd("EXISTS")
+            .arg(&blacklist_key)
+            .query_async(&mut *conn)
+            .await
+            .unwrap_or(false);
+        
+        if is_blacklisted {
+            return Err(HttpError::unauthorized("Token has been revoked. Please login again.".to_string()));
+        }
+    }
+
+    let user_id = uuid::Uuid::parse_str(&token_details)
             .map_err(|_| {
                 HttpError::unauthorized(ErrorMessage::InvalidToken.to_string())
             })?;

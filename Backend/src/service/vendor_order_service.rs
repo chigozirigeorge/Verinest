@@ -275,12 +275,45 @@ impl VendorOrderService {
         }
     }
     
-    /// Confirm delivery and release held funds
+    // Confirm delivery and release held funds
     pub async fn confirm_delivery(
         &self,
         buyer_id: Uuid,
         dto: ConfirmDeliveryDto,
     ) -> Result<ServiceOrder, ServiceError> {
+        // Use Redis SETNX to atomically acquire lock with 30-second expiration
+        let _lock_guard = if let Some(redis_client) = &self.db_client.redis_client {
+            let lock_key = format!("escrow_lock:order:{}", dto.order_id);
+            let lock_value = uuid::Uuid::new_v4().to_string();
+            
+            let mut conn = redis_client.lock().await;
+            let acquired_lock: bool = redis::cmd("SET")
+                .arg(&lock_key)
+                .arg(&lock_value)
+                .arg("NX")      // Only set if not exists
+                .arg("EX")      // Set expiration in seconds
+                .arg(30)        // 30-second timeout
+                .query_async(&mut *conn)
+                .await
+                .unwrap_or(false);
+            
+            if !acquired_lock {
+                return Err(ServiceError::Validation(
+                    "Order is currently being processed. Please try again in a moment.".to_string()
+                ));
+            }
+            
+            drop(conn);  // Release lock on connection
+            
+            Some(EscrowLockGuard::new(
+                redis_client.clone(),
+                lock_key,
+                lock_value
+            ))
+        } else {
+            None
+        };
+        
         let mut tx = self.db_client.pool.begin().await?;
         
         // Get order
@@ -294,7 +327,7 @@ impl VendorOrderService {
             return Err(ServiceError::UnauthorizedServiceAccess(buyer_id, order.id));
         }
         
-        // Check if already confirmed
+        // Double-check if already confirmed (verify after lock acquisition)
         if order.delivery_confirmed.unwrap_or(false) {
             return Err(ServiceError::Validation("Delivery already confirmed".to_string()));
         }
@@ -739,5 +772,57 @@ impl VendorOrderService {
         tracing::info!("✓ Dispute {} resolved with {:?}", dispute_id, resolution);
         
         Ok(updated_dispute)
+    }
+}
+
+/// ✅ FIX #8: Guard to automatically release distributed locks
+/// Releases Redis lock when dropped, preventing deadlocks
+struct EscrowLockGuard {
+    redis_client: Arc<tokio::sync::Mutex<redis::aio::MultiplexedConnection>>,
+    lock_key: String,
+    lock_value: String,
+}
+
+impl EscrowLockGuard {
+    fn new(
+        redis_client: Arc<tokio::sync::Mutex<redis::aio::MultiplexedConnection>>,
+        lock_key: String,
+        lock_value: String,
+    ) -> Self {
+        Self {
+            redis_client,
+            lock_key,
+            lock_value,
+        }
+    }
+}
+
+impl Drop for EscrowLockGuard {
+    fn drop(&mut self) {
+        // Try to clean up the lock (fire and forget since we're in drop)
+        let redis = self.redis_client.clone();
+        let key = self.lock_key.clone();
+        let value = self.lock_value.clone();
+        
+        tokio::spawn(async move {
+            // Use Lua script to atomically check and delete only if value matches
+            // This prevents deleting locks acquired by other requests
+            let script = redis::Script::new(
+                r#"
+                if redis.call("get", KEYS[1]) == ARGV[1] then
+                    return redis.call("del", KEYS[1])
+                else
+                    return 0
+                end
+                "#
+            );
+            
+            let mut conn = redis.lock().await;
+            let _ = script
+                .key(&key)
+                .arg(&value)
+                .invoke_async::<_, i32>(&mut *conn)
+                .await;
+        });
     }
 }

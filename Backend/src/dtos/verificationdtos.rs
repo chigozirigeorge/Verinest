@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use crate::models::{
-    usermodel::{VerificationStatus, VerificationType},
+    usermodel::{VerificationStatus, VerificationType, User},
     verificationmodels::*,
 };
 
@@ -85,13 +85,13 @@ pub struct VerificationStatusDto {
 // dtos/verificationdtos.rs (add this struct)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompleteUserVerificationDto {
-    pub user: crate::models::usermodel::User,
+    pub user: User,
     pub verification_documents: Vec<VerificationDocument>,
     pub is_fully_verified: bool,
 }
 
 impl CompleteUserVerificationDto {
-    pub fn from_user_and_documents(user: crate::models::usermodel::User, documents: Vec<VerificationDocument>) -> Self {
+    pub fn from_user_and_documents(user: User, documents: Vec<VerificationDocument>) -> Self {
         let is_fully_verified = user.verification_status == Some(VerificationStatus::Approved);
         
         Self {

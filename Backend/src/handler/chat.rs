@@ -286,6 +286,19 @@ pub async fn get_messages(
     Path(chat_id): Path<Uuid>,
     Query(pagination): Query<PaginationQuery>,
 ) -> Result<impl IntoResponse, HttpError> {
+    //Enforce pagination with limits to prevent memory DOS
+    // Validate page and limit bounds
+    let page = pagination.page.unwrap_or(1).max(1);  
+    
+    let mut limit = pagination.limit.unwrap_or(20) as i64;
+    if limit < 1 {
+        limit = 1;
+    } else if limit > 100 {
+        limit = 100;  // Maximum 100 messages per page
+    }
+    
+    let offset = ((page - 1) * limit as u32) as i64;
+    
     // Verify chat exists and user is participant
     let chat = app_state.db_client
         .get_chat_by_id(chat_id)
@@ -297,10 +310,6 @@ pub async fn get_messages(
         return Err(HttpError::unauthorized("Not authorized to view messages in this chat"));
     }
     
-    let page = pagination.page.unwrap_or(1);
-    let limit = pagination.limit.unwrap_or(50) as i64;
-    let offset = ((page - 1) * limit as u32) as i64;
-    
     let messages = app_state.db_client
         .get_chat_messages(chat_id, limit, offset)
         .await
@@ -308,7 +317,12 @@ pub async fn get_messages(
     
     Ok(Json(serde_json::json!({
         "status": "success",
-        "data": messages
+        "data": messages,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total_returned": messages.len()
+        }
     })))
 }
 

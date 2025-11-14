@@ -1,4 +1,3 @@
-// main.rs (Updated with Redis Integration)
 mod models;
 mod service;
 mod config;
@@ -10,6 +9,8 @@ mod middleware;
 mod mail;
 mod handler;
 mod routes;
+mod recommendation_models;
+mod services;
 
 use std::sync::Arc;
 
@@ -22,6 +23,7 @@ use sqlx::postgres::PgPoolOptions;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::filter::LevelFilter;
 use crate::service::subscriptions::start_vendor_expiry_checker;
+use crate::services::behavior_tracking::BehaviorTracker;
 
 // Import the services
 use service::{
@@ -181,6 +183,14 @@ async fn main() {
 
     // Start vendor subscription expiry checker
     tokio::spawn(start_vendor_expiry_checker(app_state.clone()));
+
+    // Start recommendation behavior tracker (consumes reco:events_list)
+    let tracker_db_client = app_state.db_client.clone();
+    let tracker = BehaviorTracker::new(tracker_db_client, "reco:events_list");
+    tokio::spawn(async move {
+        // Shutdown when the process receives CTRL+C
+        tracker.run_forever(async { let _ = tokio::signal::ctrl_c().await; }).await;
+    });
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", &config.port))
         .await

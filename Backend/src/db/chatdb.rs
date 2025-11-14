@@ -94,6 +94,43 @@ pub trait ChatExt {
     ) -> Result<Option<ContractProposal>, Error>;
 }
 
+// Helper: Scan and delete keys matching a pattern without blocking Redis
+// Used by invalidate_chat_caches_async to avoid O(N) KEYS command
+async fn scan_and_delete_async(
+    conn: &mut MultiplexedConnection,
+    pattern: &str,
+    pattern_name: &str,
+) -> Result<(), redis::RedisError> {
+    let mut cursor: u64 = 0;
+    let mut deleted_count = 0;
+    
+    loop {
+        let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(pattern)
+            .arg("COUNT")
+            .arg(100)  // Process 100 keys per iteration
+            .query_async(&mut *conn)
+            .await?;
+        
+        if !keys.is_empty() {
+            deleted_count += keys.len();
+            let _: Result<usize, redis::RedisError> = conn.del(&keys).await;
+        }
+        
+        cursor = new_cursor;
+        if cursor == 0 {
+            break;  // SCAN complete
+        }
+    }
+    
+    if deleted_count > 0 {
+        tracing::debug!("Cache INVALIDATE {}: {} pattern ({} keys deleted)", pattern_name, pattern, deleted_count);
+    }
+    Ok(())
+}
+
 async fn invalidate_chat_caches_async(
     redis_client: &Arc<Mutex<MultiplexedConnection>>,
     chat_id: Uuid,
@@ -106,24 +143,17 @@ async fn invalidate_chat_caches_async(
     // Invalidate chat cache - ignore the return value (number of keys deleted)
     let _: Result<usize, redis::RedisError> = conn.del(&format!("chat:{}", chat_id)).await;
     
+    // ✅ FIX: Use SCAN instead of KEYS for non-blocking invalidation
     // Invalidate messages cache for this chat
     let messages_pattern = format!("messages:{}:*", chat_id);
-    let keys: Vec<String> = conn.keys(&messages_pattern).await?;
-    if !keys.is_empty() {
-        let _: Result<usize, redis::RedisError> = conn.del(&keys).await;
-    }
+    scan_and_delete_async(&mut conn, &messages_pattern, "messages").await?;
     
     // Invalidate user chats cache for both participants
     let user1_pattern = format!("user_chats:{}:*", participant_one_id);
     let user2_pattern = format!("user_chats:{}:*", participant_two_id);
     
-    let keys1: Vec<String> = conn.keys(&user1_pattern).await?;
-    let keys2: Vec<String> = conn.keys(&user2_pattern).await?;
-    
-    let all_keys: Vec<String> = keys1.into_iter().chain(keys2).collect();
-    if !all_keys.is_empty() {
-        let _: Result<usize, redis::RedisError> = conn.del(&all_keys).await;
-    }
+    scan_and_delete_async(&mut conn, &user1_pattern, "user_chats_1").await?;
+    scan_and_delete_async(&mut conn, &user2_pattern, "user_chats_2").await?;
     
     // Invalidate unread count for receiver
     let receiver_id = if participant_one_id == sender_id {

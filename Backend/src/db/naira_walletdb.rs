@@ -8,7 +8,7 @@ use num_traits::ToPrimitive;
 use bigdecimal::BigDecimal;
 
 use super::db::DBClient;
-use crate::models::walletmodels::*;
+use crate::models::{walletmodels::*, usermodel::User};
 use crate::utils::decimal::BigDecimalHelpers;
 
 #[async_trait]
@@ -666,7 +666,7 @@ impl NairaWalletExt for DBClient {
         return Err(Error::RowNotFound);
     }
 
-    let fee = 500;  /// added 500
+    let fee = 500;  // added 500
     let total_deduction = amount + fee;
 
     // Update sender wallet
@@ -1172,7 +1172,7 @@ impl NairaWalletExt for DBClient {
     amount: i64
 ) -> Result<bool, Error> {
     // Get user with proper tier determination
-    let user = sqlx::query_as::<_, crate::models::usermodel::User>(
+    let user = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE id = $1"
     )
     .bind(user_id)

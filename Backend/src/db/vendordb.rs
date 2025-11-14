@@ -1,12 +1,12 @@
 // db/vendordb.rs - COMPLETE IMPLEMENTATION
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{Utc};
 use uuid::Uuid;
 use sqlx::Error;
 use num_traits::ToPrimitive;
 
 use super::db::DBClient;
-use crate::models::vendormodels::*;
+use crate::models::{vendormodels::*, walletmodels::TransactionType};
 use crate::db::naira_walletdb::NairaWalletExt;
 
 #[async_trait]
@@ -953,7 +953,7 @@ impl VendorExt for DBClient {
             self.credit_wallet(
                 vendor.user_id,
                 held_amount_kobo,
-                crate::models::walletmodels::TransactionType::ServiceDelivery,
+                TransactionType::ServiceDelivery,
                 format!("Delivery confirmation: Order {}", order.order_number),
                 format!("DELIVERY_{}", order.id),
                 None,

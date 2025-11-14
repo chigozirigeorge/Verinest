@@ -12,13 +12,11 @@ use num_traits::ToPrimitive;
 use sqlx::Postgres;
 
 use crate::{
-    db::{
+    AppState, db::{
         labourdb::LaborExt::{self},
         userdb::UserExt, verificationdb::VerificationExt,
-    }, dtos::{labordtos::*, userdtos::FilterUserDto}, error::HttpError, 
-        mail::mails, middleware::JWTAuthMiddeware, models::{labourmodel::*, 
-        usermodel::User, verificationmodels::OtpPurpose}, 
-        AppState
+    }, dtos::{labordtos::*, userdtos::FilterUserDto}, error::HttpError, mail::mails, middleware::JWTAuthMiddeware, models::{labourmodel::*, 
+        usermodel::{User, VerificationStatus}, verificationmodels::OtpPurpose}
 };
 
 pub fn labour_handler() -> Router {
@@ -1821,9 +1819,6 @@ impl<T> ApiResponse<T> {
     }
 }
 
-
-// Add these handler functions to your labour.rs file
-
 // Get all contracts for the authenticated user
 pub async fn get_user_contracts(
     Extension(app_state): Extension<Arc<AppState>>,
@@ -1849,32 +1844,55 @@ pub async fn get_user_contracts(
 
     println!("✅ [get_user_contracts] Found {} contracts", contracts.len());
 
-    // Enrich contracts with job and user details
-    let mut enriched_contracts = Vec::new();
-    
-    for contract in contracts {
-        // Get job details
-        let job = app_state.db_client
-            .get_job_by_id(contract.job_id)
-            .await
-            .map_err(|e| HttpError::server_error(e.to_string()))?
-            .ok_or_else(|| HttpError::not_found("Job not found"))?;
+    // ✅ FIX: Batch fetch jobs and users instead of N+1 queries
+    // Collect unique job and user IDs
+    let job_ids: Vec<Uuid> = contracts.iter().map(|c| c.job_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let user_ids: Vec<Uuid> = {
+        let mut ids = std::collections::HashSet::new();
+        for contract in &contracts {
+            ids.insert(contract.employer_id);
+            ids.insert(contract.worker_id);
+        }
+        ids.into_iter().collect()
+    };
 
-        // Get employer details
-        let employer = app_state.db_client
-            .get_user(Some(contract.employer_id), None, None, None)
-            .await
-            .map_err(|e| HttpError::server_error(e.to_string()))?
-            .ok_or_else(|| HttpError::not_found("Employer not found"))?;
+    // Fetch all jobs in one query
+    let jobs = if !job_ids.is_empty() {
+        sqlx::query_as::<_, Job>(
+            "SELECT * FROM jobs WHERE id = ANY($1)"
+        )
+        .bind(job_ids.as_slice())
+        .fetch_all(&app_state.db_client.pool)
+        .await
+        .unwrap_or_default()
+    } else {
+        vec![]
+    };
 
-        // Get worker details
-        let worker = app_state.db_client
-            .get_user(Some(contract.worker_id), None, None, None)
-            .await
-            .map_err(|e| HttpError::server_error(e.to_string()))?
-            .ok_or_else(|| HttpError::not_found("Worker not found"))?;
+    // Fetch all users in one query
+    let users = if !user_ids.is_empty() {
+        sqlx::query_as::<_, User>(
+            "SELECT * FROM users WHERE id = ANY($1)"
+        )
+        .bind(user_ids.as_slice())
+        .fetch_all(&app_state.db_client.pool)
+        .await
+        .unwrap_or_default()
+    } else {
+        vec![]
+    };
 
-        let enriched_contract = EnrichedContract {
+    // Create lookup maps for O(1) access
+    let job_map: std::collections::HashMap<Uuid, &Job> = jobs.iter().map(|j| (j.id, j)).collect();
+    let user_map: std::collections::HashMap<Uuid, &User> = users.iter().map(|u| (u.id, u)).collect();
+
+    // Enrich contracts using the pre-fetched data
+    let enriched_contracts: Vec<EnrichedContract> = contracts.into_iter().filter_map(|contract| {
+        let job = job_map.get(&contract.job_id)?;
+        let employer = user_map.get(&contract.employer_id)?;
+        let worker = user_map.get(&contract.worker_id)?;
+
+        Some(EnrichedContract {
             id: contract.id,
             job_id: contract.job_id,
             employer_id: contract.employer_id,
@@ -1889,12 +1907,12 @@ pub async fn get_user_contracts(
             updated_at: contract.updated_at.unwrap_or_else(Utc::now),
             job: JobResponse {
                 id: job.id,
-                title: job.title,
-                description: job.description,
+                title: job.title.clone(),
+                description: job.description.clone(),
                 category: job.category.to_str().to_string(),
                 budget: job.budget.to_f64().unwrap_or(0.0),
-                location_state: job.location_state,
-                location_city: job.location_city,
+                location_state: job.location_state.clone(),
+                location_city: job.location_city.clone(),
                 estimated_duration_days: job.estimated_duration_days,
                 status: job.status.map(|s| s.to_str().to_string()).unwrap_or_default(),
                 employer_id: job.employer_id,
@@ -1903,26 +1921,26 @@ pub async fn get_user_contracts(
             },
             employer: UserResponse {
                 id: employer.id,
-                name: employer.name,
-                email: employer.email,
-                username: employer.username,
-                avatar_url: employer.avatar_url,
+                name: employer.name.clone(),
+                email: employer.email.clone(),
+                username: employer.username.clone(),
+                avatar_url: employer.avatar_url.clone(),
                 trust_score: employer.trust_score,
-                verified: employer.verified,
+                verified: employer.verification_status.unwrap_or(VerificationStatus::Unverified),
             },
             worker: UserResponse {
                 id: worker.id,
-                name: worker.name,
-                email: worker.email,
-                username: worker.username,
-                avatar_url: worker.avatar_url,
+                name: worker.name.clone(),
+                email: worker.email.clone(),
+                username: worker.username.clone(),
+                avatar_url: worker.avatar_url.clone(),
                 trust_score: worker.trust_score,
-                verified: worker.verified,
+                verified: worker.verification_status.unwrap_or(VerificationStatus::Unverified),
             },
-        };
+        })
+    }).collect();
 
-        enriched_contracts.push(enriched_contract);
-    }
+    println!("✅ [get_user_contracts] Enriched {} contracts using batch fetching (3 queries total, not N+1)", enriched_contracts.len());
 
     Ok(Json(ApiResponse::success(
         "Contracts retrieved successfully",
@@ -2007,7 +2025,7 @@ pub async fn get_contract_details(
             username: employer.username,
             avatar_url: employer.avatar_url,
             trust_score: employer.trust_score,
-            verified: employer.verified,
+            verified: employer.verification_status.unwrap_or(VerificationStatus::Unverified),
         },
         worker: UserResponse {
             id: worker.id,
@@ -2016,7 +2034,7 @@ pub async fn get_contract_details(
             username: worker.username,
             avatar_url: worker.avatar_url,
             trust_score: worker.trust_score,
-            verified: worker.verified,
+            verified: worker.verification_status.unwrap_or(VerificationStatus::Unverified),
         },
     };
 
@@ -2071,5 +2089,5 @@ pub struct UserResponse {
     pub username: String,
     pub avatar_url: Option<String>,
     pub trust_score: i32,
-    pub verified: bool,
+    pub verified: VerificationStatus,
 }

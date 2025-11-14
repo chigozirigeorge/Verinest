@@ -68,17 +68,40 @@ impl CacheHelper {
         Ok(())
     }
     
-    /// Delete multiple keys matching a pattern
+    // Delete multiple keys matching a pattern using SCAN (non-blocking)
     pub async fn delete_pattern(
         redis: &Arc<Mutex<MultiplexedConnection>>,
         pattern: &str,
     ) -> Result<(), redis::RedisError> {
         let mut conn = redis.lock().await;
-        let keys: Vec<String> = conn.keys(pattern).await?;
-        if !keys.is_empty() {
-            let _: () = conn.del(&keys).await?;
-            tracing::debug!("Cache DELETE pattern: {} ({} keys)", pattern, keys.len());
+        let mut cursor: u64 = 0;
+        let mut deleted_count = 0;
+        
+        loop {
+            // Use SCAN instead of KEYS to avoid blocking
+            // SCAN returns (cursor, keys) tuple
+            let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(pattern)
+                .arg("COUNT")
+                .arg(100)  // Process 100 keys at a time
+                .query_async(&mut *conn)
+                .await?;
+            
+            // Delete the batch of keys
+            if !keys.is_empty() {
+                deleted_count += keys.len();
+                let _: () = conn.del(&keys).await?;
+            }
+            
+            cursor = new_cursor;
+            if cursor == 0 {
+                break;  // Scan complete
+            }
         }
+        
+        tracing::debug!("Cache DELETE pattern: {} ({} keys deleted using SCAN)", pattern, deleted_count);
         Ok(())
     }
 
@@ -95,24 +118,51 @@ impl CacheHelper {
         let chat_key = format!("chat:{}", chat_id);
         let _: () = conn.del(&chat_key).await?;
         
+        // ✅ FIX: Use SCAN instead of KEYS for non-blocking invalidation
         // Invalidate messages cache for this chat
-        let keys: Vec<String> = conn.keys(format!("messages:{}:*", chat_id)).await?;
-        if !keys.is_empty() {
-            let _: () = conn.del(&keys).await?;
-        }
+        Self::scan_and_delete(&mut conn, &format!("messages:{}:*", chat_id), "messages").await?;
         
         // Invalidate user chats cache for both participants
-        let user1_keys: Vec<String> = conn.keys(format!("user_chats:{}:*", participant_one_id)).await?;
-        if !user1_keys.is_empty() {
-            let _: () = conn.del(&user1_keys).await?;
-        }
-        
-        let user2_keys: Vec<String> = conn.keys(format!("user_chats:{}:*", participant_two_id)).await?;
-        if !user2_keys.is_empty() {
-            let _: () = conn.del(&user2_keys).await?;
-        }
+        Self::scan_and_delete(&mut conn, &format!("user_chats:{}:*", participant_one_id), "user_chats_1").await?;
+        Self::scan_and_delete(&mut conn, &format!("user_chats:{}:*", participant_two_id), "user_chats_2").await?;
         
         tracing::debug!("Invalidated all caches for chat: {}", chat_id);
+        Ok(())
+    }
+    
+    /// Helper: Scan and delete keys matching a pattern without blocking Redis
+    async fn scan_and_delete(
+        conn: &mut MultiplexedConnection,
+        pattern: &str,
+        pattern_name: &str,
+    ) -> Result<(), redis::RedisError> {
+        let mut cursor: u64 = 0;
+        let mut deleted_count = 0;
+        
+        loop {
+            let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(pattern)
+                .arg("COUNT")
+                .arg(100)  // Process 100 keys per iteration
+                .query_async(&mut *conn)
+                .await?;
+            
+            if !keys.is_empty() {
+                deleted_count += keys.len();
+                let _: () = conn.del(&keys).await?;
+            }
+            
+            cursor = new_cursor;
+            if cursor == 0 {
+                break;  // SCAN complete
+            }
+        }
+        
+        if deleted_count > 0 {
+            tracing::debug!("Cache INVALIDATE {}: {} pattern ({} keys deleted)", pattern_name, pattern, deleted_count);
+        }
         Ok(())
     }
     
@@ -134,11 +184,9 @@ impl CacheHelper {
         user_id: Uuid,
     ) -> Result<(), redis::RedisError> {
         let mut conn = redis.lock().await;
-        let keys: Vec<String> = conn.keys(format!("user_chats:{}:*", user_id)).await?;
-        if !keys.is_empty() {
-            let _: () = conn.del(&keys).await?;
-            tracing::debug!("Invalidated {} user_chats keys for user: {}", keys.len(), user_id);
-        }
+        // ✅ FIX: Use SCAN instead of KEYS for non-blocking invalidation
+        Self::scan_and_delete(&mut conn, &format!("user_chats:{}:*", user_id), "user_chats").await?;
+        tracing::debug!("Invalidated user_chats cache for user: {}", user_id);
         Ok(())
     }
     
@@ -176,13 +224,10 @@ impl CacheHelper {
         let patterns = vec!["chat:*", "messages:*", "user_chats:*", "unread_count:*", "contract_proposal:*"];
         
         for pattern in patterns {
-            let keys: Vec<String> = conn.keys(pattern).await?;
-            if !keys.is_empty() {
-                let _: () = conn.del(&keys).await?;
-                tracing::info!("Cleared {} keys for pattern: {}", keys.len(), pattern);
-            }
+            Self::scan_and_delete(&mut conn, pattern, pattern).await?;
         }
         
+        tracing::info!("Cleared all chat-related cache patterns using SCAN");
         Ok(())
     }
 

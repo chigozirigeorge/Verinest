@@ -23,6 +23,7 @@ pub fn auth_handler() -> Router {
         .route("/resend-verification", post(resend_verification_email))
         .route("/forgot-password", post(forgot_password))
         .route("/reset-password", post(reset_password))
+        .route("/logout", post(logout))  
 }
 
 pub async fn register(
@@ -371,3 +372,54 @@ pub async fn resend_verification_email(
     Ok(Json(response))
 }
 
+
+// Adds token to Redis blacklist with expiration matching token's exp claim
+pub async fn logout(
+    Extension(app_state): Extension<Arc<AppState>>,
+    header_map: HeaderMap,
+) -> Result<impl IntoResponse, HttpError> {
+    // Extract token from Authorization header
+    let token = header_map
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .ok_or_else(|| HttpError::bad_request("Missing or invalid authorization token"))?;
+
+    // Decode token to get expiration
+    let token_claims = token::decode_token_claims(token, app_state.env.jwt_secret.as_bytes())
+        .map_err(|e| HttpError::unauthorized(format!("Invalid token: {}", e)))?;
+    
+    let exp = token_claims.exp;
+    let now = Utc::now().timestamp() as usize;
+    
+    if exp <= now {
+        return Err(HttpError::bad_request("Token has already expired"));
+    }
+    
+    // Calculate TTL (seconds until expiration)
+    let ttl_seconds = exp - now;
+    let user_id = &token_claims.sub;
+    
+    // Add token to Redis blacklist with expiration equal to token expiration
+    if let Some(redis_client) = &app_state.db_client.redis_client {
+        let blacklist_key = format!("token_blacklist:{}", user_id);
+        let mut conn = redis_client.lock().await;
+        
+        let _ = redis::cmd("SET")
+            .arg(&blacklist_key)
+            .arg("blacklisted")
+            .arg("EX")
+            .arg(ttl_seconds)
+            .query_async::<_, String>(&mut *conn)
+            .await;
+        
+        tracing::info!("✓ User {} logged out - token blacklisted until Unix timestamp {}", user_id, exp);
+    }
+
+    let response = Response {
+        message: "Logged out successfully".to_string(),
+        status: "success",
+    };
+
+    Ok(Json(response))
+}

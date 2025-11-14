@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::models::subscriptionmodels::{UserSubscription, SubscriptionTier};
+use crate::models::{
+    subscriptionmodels::{UserSubscription, SubscriptionTier},
+    usermodel::User
+};
 
 #[async_trait]
 pub trait SubscriptionExt {
@@ -21,7 +24,7 @@ pub trait SubscriptionExt {
         &self,
         user_id: Uuid,
         tier: SubscriptionTier,
-    ) -> Result<crate::models::usermodel::User, sqlx::Error>;
+    ) -> Result<User, sqlx::Error>;
 }
 
 #[async_trait]
@@ -71,8 +74,8 @@ impl SubscriptionExt for super::db::DBClient {
         &self,
         user_id: Uuid,
         tier: SubscriptionTier,
-    ) -> Result<crate::models::usermodel::User, sqlx::Error> {
-        sqlx::query_as::<_, crate::models::usermodel::User>(
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as::<_, User>(
             r#"
             UPDATE users
             SET subscription_tier = $1, updated_at = NOW()

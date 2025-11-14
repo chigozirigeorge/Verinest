@@ -10,7 +10,6 @@ use std::borrow::Cow;
 
 use crate::models::usermodel::*;
 
-
 #[derive(Validate, Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RegisterUserWithReferralDto {
     #[validate(length(min = 1, message = "Name is required"))]
@@ -360,7 +359,7 @@ pub struct AdminUserDto {
 }
 
 impl AdminUserDto {
-    pub fn from_user(user: &crate::models::usermodel::User) -> Self {
+    pub fn from_user(user: &User) -> Self {
         Self {
             id: user.id.to_string(),
             name: user.name.clone(),

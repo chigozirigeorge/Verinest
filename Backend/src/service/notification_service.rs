@@ -4,10 +4,7 @@ use uuid::Uuid;
 use crate::{
     db::{db::DBClient, userdb::UserExt}, mail::mails, 
     models::{
-        chatnodels::Message, labourmodel::*, 
-        vendormodels::{ServiceDispute, ServiceOrder, SubscriptionTier, VendorService}, 
-        verificationmodels::VerificationDocument,
-        usermodel::VerificationStatus,
+        chatnodels::Message, labourmodel::*, usermodel::VerificationStatus, vendormodels::{ServiceDispute, ServiceOrder, SubscriptionTier, VendorService}, verificationmodels::VerificationDocument
     }
 };
 use crate::db::labourdb::LaborExt;
@@ -67,16 +64,16 @@ impl NotificationService {
         notification_type: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Use appropriate email template based on notification type
-        match notification_type {
-            "job_application" | "job_assigned" | "job_completion" => {
-                // Use existing email functions from mails.rs
-                Ok(())
-            }
-            _ => {
-                // Send generic notification email
-                Ok(())
-            }
-        }
+              mails::send_notification_email(
+                to_email, 
+                username, 
+                title, 
+                message, 
+                notification_type
+            ).await;
+
+            Ok(())
+         
     }
     
     // Job-related notifications with email
@@ -182,7 +179,7 @@ impl NotificationService {
             let _ = mails::send_verification_status_email(
                 &user.email, 
                 &user.username, 
-                &crate::models::usermodel::VerificationStatus::Rejected,
+                &VerificationStatus::Rejected,
                 verification.review_notes.as_deref()
             ).await;
         }
@@ -209,7 +206,7 @@ impl NotificationService {
             let _ = mails::send_verification_status_email(
                 &user.email, 
                 &user.username, 
-                &crate::models::usermodel::VerificationStatus::Approved,
+                &VerificationStatus::Approved,
                 verification.review_notes.as_deref()
             ).await;
         }

@@ -9,8 +9,9 @@ use crate::{
     AppState, 
     handler::{
         auth::auth_handler, 
-        cache_handler::cache_handler,  // Add this import
+        cache_handler::cache_handler, 
         chat::chat_handler, 
+        feed::get_feed,
         google_oauth::oauth_handler, 
         labour::{
             get_job_details, 
@@ -77,6 +78,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
     // Public labour routes (no auth required - job browsing)
     let public_labour_routes = Router::new()
         .route("/jobs", get(search_jobs))
+        .route("/feed", get(get_feed))
         .route("/jobs/:job_id", get(get_job_details))
         .route("/workers/search", get(search_workers))
         .route("/workers/:worker_id", get(get_worker_details));

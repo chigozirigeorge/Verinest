@@ -8,6 +8,8 @@ use axum::{
     routing::{get, post, put},
     Extension, Json, Router,
 };
+use chrono::Utc;
+use rand::Rng;
 use uuid::Uuid;
 use validator::Validate;
 use hmac::{Hmac, Mac};
@@ -18,20 +20,18 @@ use subtle::ConstantTimeEq;
 use crate::{
     db::{
         userdb::UserExt,
-        naira_walletdb::NairaWalletExt
+        naira_walletdb::NairaWalletExt,
+        verificationdb::VerificationExt
     },
     dtos::naira_walletdtos::*,
     error::HttpError,
     middleware::JWTAuthMiddeware,
-    models::walletmodels::*,
+    models::{walletmodels::*, verificationmodels::OtpPurpose},
     service::payment_provider::PaymentProviderService,
+    mail::mails,
     AppState,
 };
-use crate::db::verificationdb::VerificationExt;
-use crate::mail::mails;
-use crate::models::verificationmodels::OtpPurpose;
-use chrono::Utc;
-use rand::Rng;
+
 
 pub fn naira_wallet_handler() -> Router {
     Router::new()

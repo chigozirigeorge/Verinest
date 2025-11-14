@@ -61,3 +61,20 @@ pub fn decode_token<T: Into<String>>(
         Err(_) => Err(HttpError::new(ErrorMessage::InvalidToken.to_string(), StatusCode::UNAUTHORIZED))
     }
 }
+
+/// ✅ FIX #6: Get full token claims (including expiration)
+pub fn decode_token_claims<T: Into<String>>(
+    token: T,
+    secret: &[u8]
+) -> Result<TokenClaims, HttpError> {
+    let decode = decode::<TokenClaims>(
+        &token.into(), 
+        &DecodingKey::from_secret(secret), 
+        &Validation::new(Algorithm::HS256),
+    );
+
+    match decode {
+        Ok(token_data) => Ok(token_data.claims),
+        Err(_) => Err(HttpError::new(ErrorMessage::InvalidToken.to_string(), StatusCode::UNAUTHORIZED))
+    }
+}

@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 use axum::{
     extract::{Path, Query},
     response::IntoResponse,
-    routing::{get, post, put, delete},
+    routing::{get, post, put},
     Extension, Json, Router,
 };
 use uuid::Uuid;
@@ -15,7 +15,10 @@ use chrono::{DateTime, Utc};
 use num_traits::ToPrimitive;
 
 use crate::{
-    AppState, db::{naira_walletdb::NairaWalletExt, userdb::UserExt, vendordb::VendorExt}, dtos::vendordtos::ConfirmDeliveryDto, error::HttpError, middleware::JWTAuthMiddeware, models::{usermodel::UserRole, vendormodels::*}, service::vendor_order_service::VendorOrderService
+    AppState, db::{naira_walletdb::NairaWalletExt, userdb::UserExt, vendordb::VendorExt}, 
+    dtos::vendordtos::ConfirmDeliveryDto, error::HttpError, 
+    middleware::JWTAuthMiddeware, 
+    models::{usermodel::UserRole, walletmodels::*, vendormodels::*}, service::vendor_order_service::VendorOrderService
 };
 
 pub fn vendor_handler() -> Router {
@@ -896,7 +899,7 @@ pub async fn initiate_purchase(
             .debit_wallet(
                 auth.user.id,
                 total_kobo,
-                crate::models::walletmodels::TransactionType::ServicePayment,
+                TransactionType::ServicePayment,
                 format!("Purchase: {}", service.title),
                 payment_reference.clone(),
                 None,
@@ -972,7 +975,7 @@ pub async fn initiate_purchase(
                 auth.user.email.clone(),
                 total_amount,
                 payment_reference.clone(),
-                crate::models::walletmodels::PaymentMethod::Card,
+                PaymentMethod::Card,
                 Some(serde_json::json!({
                     "service_id": service_id,
                     "quantity": body.quantity,
@@ -1207,7 +1210,7 @@ pub async fn complete_order(
         .credit_wallet(
             vendor.user_id,
             vendor_amount_kobo,
-            crate::models::walletmodels::TransactionType::ServicePayment,
+            TransactionType::ServicePayment,
             format!("Sale: Order {}", order.order_number),
             format!("VENDOR_PAY_{}", order.id),
             None,
@@ -1271,7 +1274,7 @@ pub async fn cancel_order(
             .credit_wallet(
                 order.buyer_id,
                 total_kobo,
-                crate::models::walletmodels::TransactionType::JobRefund,
+                TransactionType::JobRefund,
                 format!("Refund: Order {}", order.order_number),
                 format!("REFUND_{}", order.id),
                 None,
@@ -1538,7 +1541,6 @@ pub struct CreateServiceDisputeDto {
     pub evidence_urls: Option<Vec<String>>,
 }
 
-// Add to vendor.rs
 pub async fn calculate_delivery_fee(
     vendor_state: &str,
     vendor_city: &str,

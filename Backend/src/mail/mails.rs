@@ -181,6 +181,24 @@ pub async fn send_job_completion_email(
     send_email(to_email, subject, template_path, &placeholders).await
 }
 
+pub async fn send_notification_email(
+    to_email: &str,
+    username: &str,
+    title: &str,
+    message: &str,
+    notification_type: &str
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subject = notification_type;
+    let template_path = "src/mail/templates/Mail_notification.html";
+    let placeholders = vec![
+        ("{{username}}".to_string(), username.to_string()),
+        ("{{title}}".to_string(), title.to_string()),
+        ("{{message}}".to_string(), message.to_string()),
+    ];
+
+    send_email(to_email, subject, template_path, &placeholders).await
+}
+
 // Transaction Emails
 pub async fn send_payment_released_email(to_email: &str, username: &str, amount: f64) -> Result<(), Box<dyn std::error::Error>> {
     let subject = "Payment Released";
