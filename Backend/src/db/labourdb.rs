@@ -349,7 +349,7 @@ impl LaborExt for DBClient {
                 experience_years, description, 
                 hourly_rate, daily_rate, 
                 location_state, location_city, 
-                is_available, rating, completed_jobs, 
+                is_available, rating, completed_jobs::BIGINT as completed_jobs, 
                 created_at, updated_at
             "#
         )
@@ -377,7 +377,7 @@ impl LaborExt for DBClient {
                 experience_years, description, 
                 hourly_rate, daily_rate, 
                 location_state, location_city, 
-                is_available, rating, completed_jobs, 
+                is_available, rating, completed_jobs::BIGINT as completed_jobs, 
                 created_at, updated_at
             FROM worker_profiles
             WHERE user_id = $1
@@ -403,7 +403,7 @@ impl LaborExt for DBClient {
             experience_years, description, 
             hourly_rate, daily_rate, 
             location_state, location_city, 
-            is_available, rating, completed_jobs, 
+            is_available, rating, completed_jobs::BIGINT as completed_jobs, 
             created_at, updated_at
         FROM worker_profiles
         WHERE id = $1
@@ -432,7 +432,7 @@ impl LaborExt for DBClient {
                 experience_years, description, 
                 hourly_rate, daily_rate, 
                 location_state, location_city, 
-                is_available, rating, completed_jobs, 
+                is_available, rating, completed_jobs::BIGINT as completed_jobs, 
                 created_at, updated_at
             "#
         )
@@ -452,10 +452,10 @@ impl LaborExt for DBClient {
         sqlx::query_as::<_, WorkerProfile>(
             r#"
             SELECT id, user_id, category, experience_years, description, hourly_rate, 
-            daily_rate, location_state, location_city, is_available, rating, completed_jobs, created_at, updated_at
+            daily_rate, location_state, location_city, is_available, rating, completed_jobs::BIGINT as completed_jobs, created_at, updated_at
             FROM worker_profiles
             WHERE location_state = $1 AND category = $2 AND is_available = true
-            ORDER BY rating DESC, completed_jobs DESC
+            ORDER BY rating DESC, completed_jobs::BIGINT DESC
             LIMIT $3 OFFSET $4
             "#
         )
