@@ -550,8 +550,7 @@ pub struct WorkerProfileApplicationResponse {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct SignContractDto {
-    pub otp_code: Option<String>, // OTP for verification
-    pub request_otp: Option<bool>, // Flag to request OTP
+    // Intentionally empty - PIN verification happens via /transaction-pin/verify which sets a short-lived server-side flag
 }
 
 #[derive(Debug, Deserialize, Validate)]

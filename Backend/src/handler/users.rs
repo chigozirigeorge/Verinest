@@ -126,14 +126,16 @@ pub async fn verify_transaction_pin(
         .ok_or_else(|| HttpError::not_found("User not found"))?;
 
     // Check if user has set a transaction PIN
-    let stored_pin = current_user.transaction_pin
+
+    let stored_hash = current_user.transaction_pin_hash
+        .as_deref()
         .ok_or_else(|| HttpError::bad_request("Transaction PIN not set. Please set a PIN first."))?;
 
-    // Verify the provided PIN
-    let provided_pin = body.transaction_pin.parse::<i32>()
-        .map_err(|_| HttpError::bad_request("Invalid PIN format"))?;
+    // Verify the provided PIN using Argon2 compare
+    let pin_ok = crate::utils::password::compare(&body.transaction_pin, Some(stored_hash))
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    if provided_pin != stored_pin {
+    if !pin_ok {
         return Ok(Json(TransactionPinResponse {
             status: "error".to_string(),
             message: "Invalid transaction PIN".to_string(),
@@ -142,7 +144,21 @@ pub async fn verify_transaction_pin(
         }));
     }
 
+    // Mark verification in Redis for short time so frontend can call sensitive endpoints (like signing) without resending PIN
     let expires_at = Utc::now() + chrono::Duration::minutes(5);
+    if let Some(redis_arc) = &app_state.db_client.redis_client {
+        let key = format!("pin:verified:{}", user.user.id);
+        let mut conn = redis_arc.lock().await;
+        // SET key with EXPIRE 300 seconds
+        let _ : () = redis::cmd("SET")
+            .arg(&key)
+            .arg("1")
+            .arg("EX")
+            .arg(300)
+            .query_async(&mut *conn)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+    }
 
     Ok(Json(TransactionPinResponse {
         status: "success".to_string(),
@@ -169,8 +185,9 @@ pub async fn set_transaction_pin(
         return Err(HttpError::bad_request("Transaction PIN must be exactly 6 digits"));
     }
 
-    let new_pin_val = new_pin_clean.parse::<i32>()
-        .map_err(|_| HttpError::bad_request("Invalid PIN format"))?;
+    // Hash the PIN before storing
+    let hashed_pin = crate::utils::password::hash(new_pin_clean.to_string())
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     // If user already has a PIN, require current PIN or password
     let current_user = app_state.db_client
@@ -179,13 +196,13 @@ pub async fn set_transaction_pin(
         .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("User not found"))?;
 
-    if let Some(existing_pin) = current_user.transaction_pin {
-        // Require current PIN for PIN changes
+    if let Some(existing_hash) = current_user.transaction_pin_hash.clone() {
+        // Require current PIN for PIN changes - verify against stored hash
         if let Some(provided_pin) = &body.current_pin {
-            let provided_pin_val = provided_pin.parse::<i32>()
-                .map_err(|_| HttpError::bad_request("Invalid current PIN format"))?;
-            
-            if provided_pin_val != existing_pin {
+            let current_ok = crate::utils::password::compare(provided_pin, Some(&existing_hash))
+                .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+            if !current_ok {
                 return Err(HttpError::unauthorized("Invalid current transaction PIN"));
             }
         } else {
@@ -209,7 +226,7 @@ pub async fn set_transaction_pin(
 
     // Update the PIN
     let updated_user = app_state.db_client
-        .update_transaction_pin(user_id, new_pin_val)
+        .update_transaction_pin_hash(user_id, &hashed_pin)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 

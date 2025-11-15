@@ -132,6 +132,9 @@ pub struct User {
     pub transaction_pin: Option<i32>,
     
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub transaction_pin_hash: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub next_of_kin: Option<String>,
     
     #[serde(skip_serializing_if = "Option::is_none")]

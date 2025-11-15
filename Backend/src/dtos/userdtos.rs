@@ -78,7 +78,6 @@ pub struct FilterUserDto {
     pub dob: DateTime<Utc>,
     pub nationality: Option<String>,
     pub lga: String,
-    pub transaction_pin: Option<i32>,
     pub email_verified: bool,
     pub document_verified: bool,
     pub verification_status: Option<String>,
@@ -104,7 +103,7 @@ impl FilterUserDto {
             nationality: user.nationality.clone(),
             lga: user.lga.clone().unwrap_or_default(),
             dob: user.dob.unwrap_or_else(|| chrono::Utc::now()),
-            transaction_pin: user.transaction_pin,
+            
             wallet_address: user.wallet_address.clone(),
             avatar_url: user.avatar_url.clone(),
             role: user.role.to_str().to_string(),

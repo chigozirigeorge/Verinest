@@ -1486,57 +1486,24 @@ pub async fn sign_contract(
         return Err(HttpError::bad_request("Contract already signed by you"));
     }
 
-    // If requesting OTP, send it and return
-    if body.request_otp == Some(true) {
-        let otp_code = format!("{:06}", rand::rng().random_range(0..1_000_000));
-        let expires_at = chrono::Utc::now() + chrono::Duration::minutes(10);
-        
-        // Store OTP
-        let _ = app_state.db_client
-            .create_otp(
-                auth.user.id,
-                auth.user.email.clone(),
-                otp_code.clone(),
-                OtpPurpose::SensitiveAction,
-                expires_at,
-            )
+    // Require prior transaction PIN verification (short-lived Redis flag set by /transaction-pin/verify)
+    let redis_verified = if let Some(redis_arc) = &app_state.db_client.redis_client {
+        let key = format!("pin:verified:{}", auth.user.id);
+        let mut conn = redis_arc.lock().await;
+        let res: Option<String> = redis::cmd("GET")
+            .arg(&key)
+            .query_async(&mut *conn)
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-        // Send email
-        let _ = mails::send_contract_signature_otp_email(
-            &auth.user.email,
-            &auth.user.name,
-            &otp_code,
-            &contract_result.agreed_rate.to_f64().unwrap_or(0.0),
-            contract_result.agreed_timeline,
-        ).await;
+        res.is_some()
+    } else {
+        false
+    };
 
-        return Ok((
-            StatusCode::ACCEPTED,
-            Json(serde_json::json!({
-                "status": "success",
-                "message": "OTP sent to your email. Please verify to sign contract."
-            }))
-        ).into_response());
+    if !redis_verified {
+        return Err(HttpError::unauthorized("Transaction PIN not verified. Please verify your PIN before signing the contract."));
     }
-
-    // Verify OTP before signing
-    let otp_code = body.otp_code.ok_or_else(|| 
-        HttpError::bad_request("OTP code required to sign contract")
-    )?;
-
-    let otp = app_state.db_client
-        .get_valid_otp(&auth.user.email, &otp_code, OtpPurpose::SensitiveAction)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?
-        .ok_or_else(|| HttpError::unauthorized("Invalid or expired OTP"))?;
-
-    // Mark OTP as used
-    let _ = app_state.db_client
-        .mark_otp_used(otp.id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     // Sign the contract
     let signed_contract = app_state.db_client
@@ -2091,3 +2058,5 @@ pub struct UserResponse {
     pub trust_score: i32,
     pub verified: VerificationStatus,
 }
+
+

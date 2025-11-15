@@ -72,6 +72,12 @@ pub trait UserExt {
         transaction_pin: i32,
     ) -> Result<User, sqlx::Error>;
 
+    async fn update_transaction_pin_hash(
+        &self,
+        user_id: Uuid,
+        transaction_pin_hash: &str,
+    ) -> Result<User, sqlx::Error>;
+
     async fn verifed_token(
         &self,
         token: &str,
@@ -308,7 +314,7 @@ impl UserExt for DBClient {
                 referral_code, referral_count, google_id, avatar_url,
                 wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                 verification_token, token_expires_at,
                 subscription_tier, role_change_count, role_change_reset_at,
                 created_at,
@@ -332,7 +338,7 @@ impl UserExt for DBClient {
                 referral_code, referral_count, google_id, avatar_url,
                 wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                 verification_token, token_expires_at,
                 subscription_tier, role_change_count, role_change_reset_at,
                 created_at,
@@ -360,7 +366,7 @@ impl UserExt for DBClient {
                 referral_code, referral_count, google_id, avatar_url,
                 wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                 verification_token, token_expires_at,
                 subscription_tier, role_change_count, role_change_reset_at,
                 created_at,
@@ -410,7 +416,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -432,7 +438,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -454,7 +460,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -476,7 +482,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -509,7 +515,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -544,7 +550,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -588,7 +594,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -618,7 +624,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -648,7 +654,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -671,13 +677,13 @@ impl UserExt for DBClient {
             UPDATE users
             SET transaction_pin = $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, name, username, email, password,
+        RETURNING id, name, username, email, password,
                     role, trust_score, verified,
                     verification_type,
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+            verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -685,6 +691,35 @@ impl UserExt for DBClient {
             "#,
         )
         .bind(transaction_pin)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    async fn update_transaction_pin_hash(
+        &self,
+        user_id: Uuid,
+        transaction_pin_hash: &str,
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            r#"
+            UPDATE users
+            SET transaction_pin_hash = $1, updated_at = NOW()
+            WHERE id = $2
+            RETURNING id, name, username, email, password,
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
+            "#,
+        )
+        .bind(transaction_pin_hash)
         .bind(user_id)
         .fetch_one(&self.pool)
         .await
@@ -750,7 +785,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -785,7 +820,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -813,7 +848,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -844,7 +879,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -874,7 +909,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -923,7 +958,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -1008,7 +1043,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
@@ -1206,7 +1241,7 @@ impl UserExt for DBClient {
                 wallet_address, verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality,
-                dob, lga, transaction_pin, next_of_kin,
+                dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                 verification_token, token_expires_at,
                 created_at,
                 updated_at

@@ -1,6 +1,4 @@
 use std::sync::Arc;
-use uuid::Uuid;
-use sqlx::Error as SqlxError;
 use crate::db::db::DBClient;
 use crate::services::reco_db::RecoDB;
 use crate::recommendation_models::Interaction;
@@ -54,17 +52,14 @@ impl BehaviorTracker {
             // Try to pop an event from the list with a small timeout
             if let Some(rc) = &self.db_client.redis_client {
                 let mut conn = rc.lock().await;
-                // Use the correct BRPOP signature that returns Option<(String, String)>
-                let result: Result<(String, String), redis::RedisError> = 
-                    conn.brpop(&self.queue_key, 5).await;
-                
-                match result {
-                    Ok((_key, payload)) => {
+                // Use explicit BRPOP command and map to Option<(String, String)> so nil (timeout) is handled
+                match redis::cmd("BRPOP").arg(&self.queue_key).arg(5).query_async::<_, Option<(String, String)>>(&mut *conn).await {
+                    Ok(Some((_key, payload))) => {
                         match from_str::<Interaction>(&payload) {
                             Ok(interaction) => {
                                 if let Err(e) = self.reco_db.record_interaction(&interaction).await {
                                     tracing::error!("BehaviorTracker: failed to record interaction: {}", e.to_string());
-                                    // On DB error, consider pushing the payload to a dead-letter queue in Redis
+                                    // On DB error, push the payload to a dead-letter list in Redis
                                     let _: Result<(), _> = conn.lpush("reco:dead_letter", &payload).await;
                                 }
                             }
@@ -74,16 +69,13 @@ impl BehaviorTracker {
                             }
                         }
                     }
+                    Ok(None) => {
+                        // timeout, no data
+                    }
                     Err(e) => {
-                        // Check if it's a timeout error (normal case)
-                        if e.kind() == redis::ErrorKind::ResponseError && 
-                           e.to_string().contains("BRPOP timeout") {
-                            // timeout, no data - this is normal, continue
-                        } else {
-                            tracing::error!("BehaviorTracker: redis brpop error: {}", e.to_string());
-                            // backoff a bit to avoid tight error loop
-                            sleep(self.idle_sleep).await;
-                        }
+                        tracing::error!("BehaviorTracker: redis brpop error: {}", e.to_string());
+                        // backoff a bit to avoid tight error loop
+                        sleep(self.idle_sleep).await;
                     }
                 }
             }

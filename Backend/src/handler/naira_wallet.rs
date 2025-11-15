@@ -388,12 +388,15 @@ pub async fn withdraw_funds(
 
     // --- SECURITY: verify transaction PIN or email OTP for transfer ---
     if let Some(pin_str) = &body.transaction_pin {
-        if let Ok(provided_pin) = pin_str.parse::<i32>() {
-            if auth.user.transaction_pin.is_none() || auth.user.transaction_pin.unwrap() != provided_pin {
-                return Err(HttpError::unauthorized("Invalid transaction pin"));
-            }
-        } else {
-            return Err(HttpError::bad_request("Invalid transaction_pin format"));
+        // Verify against stored hashed PIN
+        let stored_hash = auth.user.transaction_pin_hash.as_deref()
+            .ok_or_else(|| HttpError::bad_request("Transaction PIN not set on account"))?;
+
+        let pin_ok = crate::utils::password::compare(pin_str, Some(stored_hash))
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+        if !pin_ok {
+            return Err(HttpError::unauthorized("Invalid transaction pin"));
         }
     } else if let Some(otp_code) = &body.email_otp {
         let otp = app_state
