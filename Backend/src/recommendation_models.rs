@@ -27,6 +27,7 @@ pub enum JobStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "feed_item_type", rename_all = "lowercase")]
 pub enum FeedItemType {
     Job,
@@ -36,6 +37,7 @@ pub enum FeedItemType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "interaction_type", rename_all = "lowercase")]
 pub enum InteractionType {
     View,

@@ -523,25 +523,13 @@ pub async fn respond_to_proposal(
     }
     
     if body.response == "accepted" {
-        // Create contract and assign worker
-        let contract = app_state.db_client
-            .create_job_contract(
+        // Create contract and assign worker via the LabourService (service will create contract
+        // and perform the assignment with the new sign-gated escrow semantics).
+        let assignment_result = app_state.labour_service
+            .assign_worker_to_job(
                 proposal.job_id,
                 proposal.employer_id,
-                proposal.worker_id,
-                proposal.agreed_rate,
-                proposal.agreed_timeline,
-                proposal.terms,
-            )
-            .await
-            .map_err(|e| HttpError::server_error(e.to_string()))?;
-        
-        // Assign worker to job and create escrow
-        let assignment_result = app_state.db_client
-            .assign_worker_to_job(
-                proposal.job_id, 
-                proposal.employer_id, 
-                proposal.worker_id // This should be profile_id, but we need to get it first
+                proposal.worker_id, // worker_user_id (USER ID)
             )
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
@@ -562,7 +550,7 @@ pub async fn respond_to_proposal(
             "message": "Contract proposal accepted",
             "data": {
                 "proposal": updated_proposal,
-                "contract": contract,
+                "contract": assignment_result.contract,
                 "job": assignment_result.job,
                 "escrow": assignment_result.escrow
             }

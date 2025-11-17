@@ -19,17 +19,21 @@ impl RecoDB {
 
     // Record an interaction in the DB (postgres). This is the canonical store for behavioral events.
     pub async fn record_interaction(&self, interaction: &Interaction) -> Result<(), SqlxError> {
+        // Cast the item_type and action parameters to the Postgres enum types so
+        // text inputs (e.g. "job", "view") are accepted. This avoids the
+        // "expression is of type text" error when inserting.
         let query = r#"
             INSERT INTO recommendation_interactions (id, user_id, item_id, item_type, action, value, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            VALUES ($1, $2, $3, $4::feed_item_type, $5::interaction_type, $6, NOW())
         "#;
 
         sqlx::query(query)
             .bind(interaction.id)
             .bind(interaction.user_id)
             .bind(interaction.item_id)
-            .bind(format!("{:?}", interaction.item_type))
-            .bind(format!("{:?}", interaction.action))
+            // Normalize enum casing to lowercase strings to match postgres enum labels (e.g. "job", "view")
+            .bind(format!("{:?}", interaction.item_type).to_lowercase())
+            .bind(format!("{:?}", interaction.action).to_lowercase())
             .bind(interaction.value)
             .execute(&self.db_client.pool)
             .await?;
@@ -125,27 +129,22 @@ impl RecoDB {
         if let Some(redis_client) = &self.db_client.redis_client {
             let mut conn = redis_client.lock().await;
             let key = "reco:events";
-            let payload = json!({
-                "id": interaction.id.to_string(),
-                "user_id": interaction.user_id.to_string(),
-                "item_id": interaction.item_id.to_string(),
-                "item_type": format!("{:?}", interaction.item_type),
-                "action": format!("{:?}", interaction.action),
-                "value": interaction.value,
-                "created_at": interaction.created_at.map(|d| d.to_rfc3339()),
-            });
+            // Serialize the Interaction via serde so enum casing and shapes match the
+            // worker's deserializer (lowercase enums, RFC3339 timestamps, etc.)
+            let payload_str = serde_json::to_string(&interaction).map_err(|e| redis::RedisError::from((redis::ErrorKind::TypeError, "serialization error")))?;
+
             // Push into Redis Stream for stream-based consumers
             let _: String = redis::cmd("XADD")
                 .arg(key)
                 .arg("*")
                 .arg("data")
-                .arg(payload.to_string())
+                .arg(payload_str.clone())
                 .query_async(&mut *conn)
                 .await?;
 
             // Also push into a simple list for the BRPOP-based worker (backwards compatible)
             let list_key = "reco:events_list";
-            let _: () = conn.rpush(list_key, payload.to_string()).await?;
+            let _: () = conn.rpush(list_key, payload_str).await?;
             Ok(())
         } else {
             Ok(())

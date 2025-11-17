@@ -108,13 +108,14 @@ pub async fn assign_worker_to_job(
 
         // Update job with assigned worker AND create escrow in one transaction
         // The db_client.assign_worker_to_job expects USER ID for assignment
-       let assignment_result = self.db_client.assign_worker_to_job(
-            job_id, 
-            employer_id, 
+       // Update job assignment in DB (assignment only). Contract will be created here in service.
+       let updated_job = self.db_client.assign_worker_to_job(
+            job_id,
+            employer_id,
             worker_profile.id // Use profile_id (not user_id) for the third argument
         ).await?;
 
-        // Create job contract - use worker_user_id (USER ID)
+        // Create job contract - service is responsible for creating the contract on assignment
         let contract = self.db_client.create_job_contract(
             job_id,
             employer_id,
@@ -128,21 +129,21 @@ pub async fn assign_worker_to_job(
         self.audit_service.log_job_assignment(
             employer_id,
             worker_user_id,
-            &assignment_result.job,
+            &updated_job,
             &contract,
         ).await?;
 
         tx.commit().await?;
 
         // Send notifications
-        self.notification_service.notify_job_assigned_to_worker(worker_user_id, &assignment_result.job).await?;
+        self.notification_service.notify_job_assigned_to_worker(worker_user_id, &updated_job).await?;
         self.notification_service.notify_contract_awaiting_signature(worker_user_id, &contract).await?;
         self.notification_service.notify_contract_awaiting_signature(employer_id, &contract).await?;
 
         Ok(JobAssignmentResult {
-            job: assignment_result.job,
+            job: updated_job,
             contract,
-            escrow: assignment_result.escrow,
+            escrow: None,
         })
     }
 
@@ -474,7 +475,7 @@ pub async fn assign_worker_to_job(
 pub struct JobAssignmentResult {
     pub job: Job,
     pub contract: JobContract,
-    pub escrow: EscrowTransaction,
+    pub escrow: Option<EscrowTransaction>,
 }
 
 #[derive(Debug, Serialize)]

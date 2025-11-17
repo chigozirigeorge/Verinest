@@ -12,3 +12,4 @@ pub mod support_handler;
 pub mod vendor;
 pub mod cache_handler;
 pub mod feed;
+pub mod debug;

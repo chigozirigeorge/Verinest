@@ -58,13 +58,17 @@ impl BehaviorTracker {
                         match from_str::<Interaction>(&payload) {
                             Ok(interaction) => {
                                 if let Err(e) = self.reco_db.record_interaction(&interaction).await {
-                                    tracing::error!("BehaviorTracker: failed to record interaction: {}", e.to_string());
+                                    // Log the error together with the raw payload to aid debugging
+                                    tracing::error!("BehaviorTracker: failed to record interaction: {} ; payload: {}", e.to_string(), payload);
                                     // On DB error, push the payload to a dead-letter list in Redis
                                     let _: Result<(), _> = conn.lpush("reco:dead_letter", &payload).await;
+                                } else {
+                                    tracing::info!("BehaviorTracker: recorded interaction {} for user {}", interaction.id, interaction.user_id);
                                 }
                             }
                             Err(e) => {
-                                tracing::error!("BehaviorTracker: invalid event payload: {}", e.to_string());
+                                // Include raw payload when deserialization fails to make debugging easier
+                                tracing::error!("BehaviorTracker: invalid event payload: {} ; payload: {}", e.to_string(), payload);
                                 let _: Result<(), _> = conn.lpush("reco:bad_payloads", &payload).await;
                             }
                         }

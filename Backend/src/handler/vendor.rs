@@ -20,6 +20,8 @@ use crate::{
     middleware::JWTAuthMiddeware, 
     models::{usermodel::UserRole, walletmodels::*, vendormodels::*}, service::vendor_order_service::VendorOrderService
 };
+use crate::recommendation_models::{Interaction, FeedItemType, InteractionType};
+use crate::services::reco_db::RecoDB;
 
 pub fn vendor_handler() -> Router {
     Router::new()
@@ -591,6 +593,12 @@ pub async fn view_service_public(
     let _ = app_state.db_client
         .record_service_view(service_id, viewer_id, session_id)
         .await;
+
+    // Push a lightweight interaction into the recom pipeline for logged-in viewers
+    if let Some(auth) = auth {
+        let interaction = Interaction::new(auth.user.id, service_id, FeedItemType::Service, InteractionType::View, Some(1.0));
+        let _ = RecoDB::new(app_state.db_client.clone()).push_event_stream(&interaction).await;
+    }
     
     // Update user preferences if logged in
     if let Some(uid) = viewer_id {

@@ -358,7 +358,7 @@ pub struct AssignWorkerDto {
 #[derive(Debug, Serialize)]
 pub struct AssignWorkerResponse {
     pub job: Job,
-    pub escrow: EscrowTransaction,
+    pub escrow: Option<EscrowTransaction>,
     pub contract: JobContract,
 }
 

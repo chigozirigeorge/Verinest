@@ -152,6 +152,8 @@ let protected_labour_routes = Router::new()
         .nest("/chat", chat_routes)
         .nest("/notifications", notification_routes)
         .nest("/admin", cache_routes)  // Add cache monitoring under /api/admin
+        // Debug routes under /api/debug - ensure Extension<AppState> is present via api_route layering
+        .nest("/debug", Router::new().route("/reco/push", post(crate::handler::debug::push_reco_event)))
         .layer(TraceLayer::new_for_http())
         .layer(Extension(app_state));
 

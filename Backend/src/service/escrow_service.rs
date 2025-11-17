@@ -11,6 +11,10 @@ use crate::{
     DBClient,
     db::labourdb::LaborExt,
 };
+use crate::models::walletmodels::{naira_to_kobo, TransactionType};
+use crate::db::naira_walletdb::NairaWalletExt;
+use num_traits::ToPrimitive;
+use sqlx::Row;
 
 // Option 1: Remove fields from enum variants for SQLx compatibility
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
@@ -134,7 +138,7 @@ impl EscrowService {
         let escrow = self.db_client.create_escrow_transaction(
             job_id,
             employer_id,
-            Uuid::nil(), // Worker will be assigned later
+            None, // Worker will be assigned later
             amount,
             platform_fee,
         ).await?;
@@ -201,6 +205,71 @@ impl EscrowService {
             None, // No transaction hash for partial releases
         ).await?;
 
+        // Payment movement: release from employer hold and credit worker for the released portion.
+        // Strategy: release the existing wallet hold, credit the worker the release amount, and
+        // recreate a new hold for any remaining amount if needed.
+        if let Some(hold_id) = escrow.wallet_hold_id {
+            // compute release amount in kobo
+            let escrow_amount_naira = escrow.amount.to_f64().unwrap_or(0.0);
+            let release_amount_naira = escrow_amount_naira * release_percentage;
+            let release_kobo = naira_to_kobo(release_amount_naira);
+
+            // Attempt to release the existing hold (mark funds used)
+            match self.db_client.release_wallet_hold(hold_id, false).await {
+                Ok(_) => {
+                    // Credit worker for released amount
+                    if let Some(worker_profile_id) = escrow.worker_id {
+                        // Map profile id -> user id
+                        if let Ok(worker_profile) = self.db_client.get_worker_profile_by_id(worker_profile_id).await {
+                            let credit_result = self.db_client.credit_wallet(
+                                worker_profile.user_id,
+                                release_kobo,
+                                TransactionType::JobPayment,
+                                format!("Partial escrow release for job {}", job_id),
+                                format!("escrow_partial_{}", escrow.id),
+                                None,
+                                None,
+                            ).await;
+
+                            if let Err(e) = credit_result {
+                                // Attempt basic compensation: try to credit employer back
+                                tracing::error!("Failed to credit worker on partial release: {:?}", e);
+                                let _ = self.db_client.credit_wallet(
+                                    escrow.employer_id,
+                                    release_kobo,
+                                    TransactionType::JobRefund,
+                                    format!("Compensating refund for failed partial release job {}", job_id),
+                                    format!("compensate_escrow_partial_{}", escrow.id),
+                                    None,
+                                    None,
+                                ).await;
+                                return Err(ServiceError::Database(e));
+                            }
+                        }
+                    }
+
+                    // If there is a remainder, create a new hold for remaining amount and persist
+                    let amount_total_kobo = naira_to_kobo(escrow_amount_naira);
+                    let remaining = amount_total_kobo.saturating_sub(release_kobo);
+                    if remaining > 0 {
+                        // Get employer wallet
+                        if let Ok(Some(wallet)) = self.db_client.get_naira_wallet(escrow.employer_id).await {
+                            match self.db_client.create_wallet_hold(wallet.id, Some(job_id), remaining, format!("Escrow hold (remaining) for job {}", job_id), None).await {
+                                Ok(new_hold) => {
+                                    let _ = self.db_client.update_escrow_wallet_hold_id(escrow.id, new_hold.id).await;
+                                }
+                                Err(e) => tracing::warn!("Failed to create replacement wallet hold for job {}: {:?}", job_id, e),
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to release wallet hold {} for partial release: {:?}", hold_id, e);
+                    return Err(ServiceError::Database(e));
+                }
+            }
+        }
+
         // In a real implementation, this would trigger actual payment
         // For web3 integration, this would call a smart contract
 
@@ -235,6 +304,49 @@ impl EscrowService {
             PaymentStatus::Completed,
             Some("manual_completion".to_string()), // In web3, this would be transaction hash
         ).await?;
+
+        // Settlement: release employer hold (mark funds used) and credit worker
+        if let Some(hold_id) = escrow.wallet_hold_id {
+            // compute amount in kobo
+            let amount_naira = escrow.amount.to_f64().unwrap_or(0.0);
+            let amount_kobo = naira_to_kobo(amount_naira);
+
+            // Try to release the hold first (deduct employer balance)
+            if let Err(e) = self.db_client.release_wallet_hold(hold_id, false).await {
+                tracing::error!("Failed to release wallet hold {} for escrow {}: {:?}", hold_id, escrow.id, e);
+                // We don't attempt recovery here - surface error
+                return Err(ServiceError::Database(e));
+            }
+
+            // Credit worker (map profile id -> user id if necessary)
+            if let Some(worker_profile_id) = escrow.worker_id {
+                let worker_profile = self.db_client.get_worker_profile_by_id(worker_profile_id).await?;
+                if let Err(e) = self.db_client.credit_wallet(
+                    worker_profile.user_id,
+                    amount_kobo,
+                    TransactionType::JobPayment,
+                    format!("Escrow payout for job {}", job_id),
+                    format!("escrow_{}", escrow.id),
+                    None,
+                    None,
+                ).await {
+                    tracing::error!("Failed to credit worker {} for escrow {}: {:?}", worker_profile.user_id, escrow.id, e);
+                    // Compensation: try to credit employer back
+                    let _ = self.db_client.credit_wallet(
+                        escrow.employer_id,
+                        amount_kobo,
+                        TransactionType::JobRefund,
+                        format!("Compensation refund for escrow {}", escrow.id),
+                        format!("compensate_escrow_{}", escrow.id),
+                        None,
+                        None,
+                    ).await;
+                    return Err(ServiceError::Database(e));
+                }
+            } else {
+                tracing::warn!("Escrow {} completed but has no worker assigned; funds released from employer but not credited", escrow.id);
+            }
+        }
 
         tx.commit().await?;
         Ok(completed_escrow)

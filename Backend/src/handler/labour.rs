@@ -3,6 +3,8 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, Query, State}, http::StatusCode, response::IntoResponse, routing::{delete, get, post, put}, Extension, Json, Router
 };
+use crate::recommendation_models::{Interaction, FeedItemType, InteractionType};
+use crate::services::reco_db::RecoDB;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use rand::Rng;
@@ -14,6 +16,7 @@ use sqlx::Postgres;
 use crate::{
     AppState, db::{
         labourdb::LaborExt::{self},
+        naira_walletdb::NairaWalletExt,
         userdb::UserExt, verificationdb::VerificationExt,
     }, dtos::{labordtos::*, userdtos::FilterUserDto}, error::HttpError, mail::mails, middleware::JWTAuthMiddeware, models::{labourmodel::*, 
         usermodel::{User, VerificationStatus}, verificationmodels::OtpPurpose}
@@ -222,7 +225,7 @@ pub async fn delete_portfolio_item(
         .ok_or_else(|| HttpError::not_found("Portfolio item not found"))?;
 
     // Check ownership
-    if portfolio_item.worker_id != worker_profile.id {
+    if portfolio_item.worker_id != Some(worker_profile.id) {
         return Err(HttpError::unauthorized("Not authorized to delete this portfolio item"));
     }
 
@@ -333,6 +336,7 @@ pub async fn search_jobs(
 
 pub async fn get_job_details(
     Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth): Extension<Option<JWTAuthMiddeware>>,
     Path(job_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, HttpError> {
     let job = app_state.db_client
@@ -340,6 +344,12 @@ pub async fn get_job_details(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+    // Push a lightweight view interaction for recommendation pipeline (if viewer is authenticated)
+    if let Some(auth) = auth {
+        let interaction = Interaction::new(auth.user.id, job.id, FeedItemType::Job, InteractionType::View, Some(1.0));
+        let _ = RecoDB::new(app_state.db_client.clone()).push_event_stream(&interaction).await;
+    }
 
     Ok(Json(ApiResponse::success(
         "Job details retrieved successfully",
@@ -1138,6 +1148,7 @@ pub async fn search_workers(
 
 pub async fn get_worker_details(
     Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth): Extension<Option<JWTAuthMiddeware>>,
     Path(worker_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, HttpError> {
     let worker_profile = app_state.db_client
@@ -1169,6 +1180,12 @@ pub async fn get_worker_details(
         portfolio,
         reviews,
     };
+
+    // Record a view interaction for logged-in users
+    if let Some(auth) = auth {
+        let interaction = Interaction::new(auth.user.id, response.profile.id, FeedItemType::WorkerProfile, InteractionType::View, Some(1.0));
+        let _ = RecoDB::new(app_state.db_client.clone()).push_event_stream(&interaction).await;
+    }
 
     Ok(Json(ApiResponse::success(
         "Worker details retrieved successfully",
@@ -1540,16 +1557,48 @@ pub async fn sign_contract(
             .map_err(|e| HttpError::server_error(e.to_string()))?
             .is_some();
 
-        if !escrow_exists && job.assigned_worker_id.is_some() {
-            // Create escrow now that contract is fully signed
-            let platform_fee = job.budget.to_f64().unwrap_or(0.0) * 0.03;
-            let _ = app_state.db_client.create_escrow_transaction(
-                job.id,
-                job.employer_id,
-                job.assigned_worker_id.unwrap(),
-                job.budget.to_f64().unwrap_or(0.0),
-                platform_fee,
-            ).await;
+        if !escrow_exists {
+            // Create escrow when the employer signs the contract (sign-gated flow).
+            // If the signer was the employer, create the escrow and attempt to place a wallet hold.
+            if signer_role == "employer" {
+                let platform_fee = job.budget.to_f64().unwrap_or(0.0) * 0.03;
+                // Create escrow with no worker assigned yet; worker_id will be set when worker signs
+                // Create escrow and place wallet hold atomically
+                match app_state.db_client.create_escrow_with_hold(
+                    job.id,
+                    job.employer_id,
+                    job.budget.to_f64().unwrap_or(0.0),
+                    platform_fee,
+                ).await {
+                    Ok(_escrow) => {
+                        tracing::info!("Escrow created and wallet hold placed for job {}", job.id);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create escrow with hold for job {}: {:?}", job.id, e);
+                        // Fallback: create escrow without hold (best-effort)
+                        if let Err(e2) = app_state.db_client.create_escrow_transaction(
+                            job.id,
+                            job.employer_id,
+                            None,
+                            job.budget.to_f64().unwrap_or(0.0),
+                            platform_fee,
+                        ).await {
+                            tracing::error!("Failed to create fallback escrow for job {}: {:?}", job.id, e2);
+                        }
+                    }
+                }
+            }
+        } else {
+            // If escrow exists but the worker just signed, ensure the escrow has the worker set
+            if signer_role == "worker" {
+                if let Ok(Some(escrow)) = app_state.db_client.get_escrow_by_job_id(job.id).await.map(|o| o) {
+                    if escrow.worker_id.is_none() {
+                        if let Some(assigned_worker) = job.assigned_worker_id {
+                            let _ = app_state.db_client.update_escrow_worker(escrow.id, assigned_worker).await;
+                        }
+                    }
+                }
+            }
         }
 
         // Notify both parties contract is active
@@ -2058,5 +2107,3 @@ pub struct UserResponse {
     pub trust_score: i32,
     pub verified: VerificationStatus,
 }
-
-

@@ -409,7 +409,7 @@ pub struct WorkerProfile {
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WorkerPortfolio {
     pub id: Uuid,
-    pub worker_id: Uuid,
+    pub worker_id: Option<Uuid>,
     pub title: String,
     pub description: String,
     pub image_url: String,
@@ -475,11 +475,12 @@ pub struct EscrowTransaction {
     pub id: Uuid,
     pub job_id: Uuid,
     pub employer_id: Uuid,
-    pub worker_id: Uuid,
+    pub worker_id: Option<Uuid>,
     pub amount: BigDecimal,
     pub platform_fee: BigDecimal,
     pub status: Option<PaymentStatus>,
     pub transaction_hash: Option<String>,
+    pub wallet_hold_id: Option<Uuid>,
     pub created_at: Option<DateTime<Utc>>,
     pub released_at: Option<DateTime<Utc>>,
 }

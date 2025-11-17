@@ -2,12 +2,14 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
-use sqlx::{Error, types::BigDecimal};
+use sqlx::{Error, types::BigDecimal, Row};
 use num_traits::ToPrimitive;
 use sqlx::Error as SqlxError;
 
 use super::db::DBClient;
-use crate::{models::labourmodel::*, service::labour_service::JobAssignmentResult};
+use crate::{models::labourmodel::*};
+use crate::models::walletmodels::naira_to_kobo;
+use crate::db::naira_walletdb::NairaWalletExt;
 
 #[async_trait]
 pub trait LaborExt {
@@ -119,7 +121,7 @@ async fn assign_worker_to_job(
     job_id: Uuid,
     employer_user_id: Uuid,
     worker_profile_id: Uuid, // This should be profile_id (from worker_profiles.id)
-) -> Result<JobAssignmentResult, Error>;
+) -> Result<Job, Error>;
 
     //Job application
     async fn create_job_application(
@@ -164,10 +166,28 @@ async fn assign_worker_to_job(
         &self,
         job_id: Uuid,
         employer_id: Uuid,
-        worker_id: Uuid,
+        worker_id: Option<Uuid>,
         amount: f64,
         platform_fee: f64, 
     ) -> Result<EscrowTransaction, Error>;
+
+    // Atomically create an escrow transaction and place a wallet hold for the employer.
+    // This inserts the escrow row, creates a wallet_holds entry and persists the hold id
+    // on the escrow row in a single DB transaction to avoid transient inconsistencies.
+    async fn create_escrow_with_hold(
+        &self,
+        job_id: Uuid,
+        employer_id: Uuid,
+        amount: f64,
+        platform_fee: f64,
+    ) -> Result<EscrowTransaction, Error>;
+
+
+    // Persist wallet_hold_id for an escrow
+    async fn update_escrow_wallet_hold_id(&self, escrow_id: Uuid, wallet_hold_id: Uuid) -> Result<EscrowTransaction, Error>;
+
+    // Update escrow worker when worker signs the contract
+    async fn update_escrow_worker(&self, escrow_id: Uuid, worker_id: Uuid) -> Result<EscrowTransaction, Error>;
 
     async fn update_escrow_status(
         &self,
@@ -760,7 +780,7 @@ async fn get_jobs_by_location_and_category(
         job_id: Uuid,
         employer_user_id: Uuid,
         worker_profile_id: Uuid,
-    ) -> Result<JobAssignmentResult, SqlxError> {
+    ) -> Result<Job, SqlxError> {
         let mut tx = self.pool.begin().await?;
 
         println!("🔍 [assign_worker_to_job] Starting assignment - Job: {}, Worker Profile: {}", job_id, worker_profile_id);
@@ -825,51 +845,12 @@ async fn get_jobs_by_location_and_category(
 
         println!("✅ [assign_worker_to_job] Job updated successfully");
 
-        // 5. Create contract
-        let contract = self.create_job_contract(
-            job_id,
-            employer_user_id,
-            worker_user_id,
-            job.budget.to_f64().unwrap_or(0.0),
-            job.estimated_duration_days,
-            format!(
-                "Standard work agreement for job: {}. Worker: {}, Employer: {}",
-                job.title,
-                worker_profile_id,
-                employer_user_id
-            ),
-        ).await?;
-
-        println!("✅ [assign_worker_to_job] Contract created successfully");
-
-        // 6. Create escrow
-        let escrow = sqlx::query_as::<_, EscrowTransaction>(
-            r#"
-            INSERT INTO escrow_transactions 
-            (job_id, employer_id, worker_id, amount, platform_fee, status)
-            VALUES ($1, $2, $3, $4, $5, 'escrowed'::payment_status)
-            RETURNING id, job_id, employer_id, worker_id, amount, platform_fee,
-            status, transaction_hash, created_at, released_at
-            "#
-        )
-        .bind(job_id)
-        .bind(updated_job.employer_id)
-        .bind(worker_user_id)
-        .bind(updated_job.escrow_amount.clone())
-        .bind(updated_job.platform_fee.clone())
-        .fetch_one(&mut *tx)
-        .await?;
-
-        println!("✅ [assign_worker_to_job] Escrow created successfully");
-
+        // We no longer create contract or escrow at assignment time.
+        // Assignment only updates the job with the assigned worker.
         tx.commit().await?;
         println!("✅ [assign_worker_to_job] Transaction committed successfully");
-        
-        Ok(JobAssignmentResult {
-            job: updated_job,
-            contract,
-            escrow,
-        })
+
+        Ok(updated_job)
     }
 
     async fn create_job_application(
@@ -1010,7 +991,7 @@ async fn get_jobs_by_location_and_category(
         &self,
         job_id: Uuid,
         employer_id: Uuid,
-        worker_id: Uuid,
+        worker_id: Option<Uuid>,
         amount: f64,
         platform_fee: f64, 
     ) -> Result<EscrowTransaction, Error> {
@@ -1025,7 +1006,7 @@ async fn get_jobs_by_location_and_category(
             (job_id, employer_id, worker_id, amount, platform_fee, status)
             VALUES ($1, $2, $3, $4, $5, 'escrowed'::payment_status)
             RETURNING id, job_id, employer_id, worker_id, amount, platform_fee,
-            status, transaction_hash, created_at, released_at
+            status, transaction_hash, wallet_hold_id, created_at, released_at
             "#
         )
         .bind(job_id)
@@ -1033,6 +1014,132 @@ async fn get_jobs_by_location_and_category(
         .bind(worker_id)
         .bind(amount_bd)
         .bind(platform_fee_bd)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    async fn create_escrow_with_hold(
+        &self,
+        job_id: Uuid,
+        employer_id: Uuid,
+        amount: f64,
+        platform_fee: f64,
+    ) -> Result<EscrowTransaction, Error> {
+        use crate::models::walletmodels::WalletHold;
+
+        let mut tx = self.pool.begin().await?;
+
+        let amount_bd = BigDecimal::try_from(amount)
+            .map_err(|_| sqlx::Error::Decode("Invalid amount".into()))?;
+        let platform_fee_bd = BigDecimal::try_from(platform_fee)
+            .map_err(|_| sqlx::Error::Decode("Invalid platform fee".into()))?;
+
+        // 1) create escrow row (without wallet_hold_id yet)
+        let escrow: EscrowTransaction = sqlx::query_as::<_, EscrowTransaction>(
+            r#"
+            INSERT INTO escrow_transactions 
+            (job_id, employer_id, worker_id, amount, platform_fee, status)
+            VALUES ($1, $2, $3, $4, $5, 'escrowed'::payment_status)
+            RETURNING id, job_id, employer_id, worker_id, amount, platform_fee,
+            status, transaction_hash, wallet_hold_id, created_at, released_at
+            "#
+        )
+        .bind(job_id)
+        .bind(employer_id)
+        .bind(None::<Uuid>)
+        .bind(amount_bd.clone())
+        .bind(platform_fee_bd.clone())
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // 2) lock employer wallet and ensure available balance
+        let wallet_row = sqlx::query(
+            "SELECT id, available_balance FROM naira_wallets WHERE user_id = $1 FOR UPDATE"
+        )
+        .bind(employer_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let wallet_row = wallet_row.ok_or_else(|| sqlx::Error::RowNotFound)?;
+        let wallet_id: Uuid = wallet_row.get::<Uuid, _>("id");
+        let available_balance: i64 = wallet_row.get::<i64, _>("available_balance");
+
+        // convert amount to kobo
+        let amount_kobo = naira_to_kobo(amount);
+
+        if available_balance < amount_kobo {
+            return Err(sqlx::Error::Protocol("insufficient_available_balance".into()));
+        }
+
+        // 3) reduce available balance
+        sqlx::query(
+            "UPDATE naira_wallets SET available_balance = available_balance - $2 WHERE id = $1"
+        )
+        .bind(wallet_id)
+        .bind(amount_kobo)
+        .execute(&mut *tx)
+        .await?;
+
+        // 4) create wallet hold
+        let hold: WalletHold = sqlx::query_as::<_, WalletHold>(
+            r#"
+            INSERT INTO wallet_holds (wallet_id, job_id, amount, reason, expires_at)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id, wallet_id, job_id, amount, reason, status, created_at, expires_at, released_at
+            "#
+        )
+        .bind(wallet_id)
+        .bind(Some(job_id))
+        .bind(amount_kobo)
+        .bind(format!("Escrow hold for job {}", job_id))
+        .bind(None::<chrono::DateTime<Utc>>)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // 5) persist hold id on escrow row and return updated escrow
+        let updated_escrow: EscrowTransaction = sqlx::query_as::<_, EscrowTransaction>(
+            r#"
+            UPDATE escrow_transactions
+            SET wallet_hold_id = $2
+            WHERE id = $1
+            RETURNING id, job_id, employer_id, worker_id, amount, platform_fee, status, transaction_hash, wallet_hold_id, created_at, released_at
+            "#
+        )
+        .bind(escrow.id)
+        .bind(hold.id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(updated_escrow)
+    }
+
+    async fn update_escrow_wallet_hold_id(&self, escrow_id: Uuid, wallet_hold_id: Uuid) -> Result<EscrowTransaction, Error> {
+        sqlx::query_as::<_, EscrowTransaction>(
+            r#"
+            UPDATE escrow_transactions
+            SET wallet_hold_id = $2
+            WHERE id = $1
+            RETURNING id, job_id, employer_id, worker_id, amount, platform_fee, status, transaction_hash, wallet_hold_id, created_at, released_at
+            "#
+        )
+        .bind(escrow_id)
+        .bind(wallet_hold_id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    async fn update_escrow_worker(&self, escrow_id: Uuid, worker_id: Uuid) -> Result<EscrowTransaction, Error> {
+        sqlx::query_as::<_, EscrowTransaction>(
+            r#"
+            UPDATE escrow_transactions
+            SET worker_id = $2
+            WHERE id = $1
+            RETURNING id, job_id, employer_id, worker_id, amount, platform_fee, status, transaction_hash, wallet_hold_id, created_at, released_at
+            "#
+        )
+        .bind(escrow_id)
+        .bind(worker_id)
         .fetch_one(&self.pool)
         .await
     }
@@ -1049,7 +1156,7 @@ async fn get_jobs_by_location_and_category(
             SET status = $2, transaction_hash = $3
             WHERE id = $1
             RETURNING id, job_id, employer_id, worker_id, amount, platform_fee,
-            status, transaction_hash, created_at, released_at
+            status, transaction_hash, wallet_hold_id, created_at, released_at
             "#
         )
         .bind(escrow_id)
@@ -1081,7 +1188,8 @@ async fn get_jobs_by_location_and_category(
     .await?;
 
     // Calculate release amount
-    let release_amount = (escrow.amount.to_f64().unwrap_or(0.0) * release_percentage / 100.0) as f64;
+    // release_percentage is a fraction between 0.0 and 1.0 (e.g., 0.3 for 30%)
+    let release_amount = (escrow.amount.to_f64().unwrap_or(0.0) * release_percentage) as f64;
     let release_amount_bd = BigDecimal::try_from(release_amount)
         .map_err(|_| sqlx::Error::Decode("Invalid release amount".into()))?;
 
@@ -1101,7 +1209,7 @@ async fn get_jobs_by_location_and_category(
             END
         WHERE id = $1
         RETURNING id, job_id, employer_id, worker_id, amount, platform_fee,
-        status, transaction_hash, created_at, released_at
+        status, transaction_hash, wallet_hold_id, created_at, released_at
         "#
     )
     .bind(escrow_id)
@@ -1433,7 +1541,7 @@ async fn get_jobs_by_location_and_category(
         sqlx::query_as::<_, EscrowTransaction>(
             r#"
             SELECT id, job_id, employer_id, worker_id, amount, platform_fee,
-            status, transaction_hash, created_at, released_at
+            status, transaction_hash, wallet_hold_id, created_at, released_at
             FROM escrow_transactions 
             WHERE job_id = $1
             "#
@@ -1450,7 +1558,7 @@ async fn get_jobs_by_location_and_category(
         sqlx::query_as::<_, EscrowTransaction>(
             r#"
             SELECT id, job_id, employer_id, worker_id, amount, platform_fee,
-            status, transaction_hash, created_at, released_at
+            status, transaction_hash, wallet_hold_id, created_at, released_at
             FROM escrow_transactions 
             WHERE id = $1
             "#
