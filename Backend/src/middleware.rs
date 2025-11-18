@@ -196,11 +196,37 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
         if let Some(ref redis_arc) = redis_opt {
             // Build cache key: include full URI and any authenticated user id
             let uri = req.uri().to_string();
-            let user_tag = req
-                .extensions()
-                .get::<JWTAuthMiddeware>()
-                .map(|j| j.user.id.to_string())
-                .unwrap_or_else(|| "anon".to_string());
+            // Resolve user tag: prefer JWTAuthMiddeware (if auth middleware ran),
+            // otherwise try to decode a Bearer token from the Authorization header.
+            let user_tag = if let Some(j) = req.extensions().get::<JWTAuthMiddeware>() {
+                j.user.id.to_string()
+            } else if let Some(auth_header) = req.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()) {
+                // Prefer Authorization header Bearer token
+                if auth_header.starts_with("Bearer ") {
+                    let token_str = &auth_header[7..];
+                    if let Ok(token_details) = crate::utils::token::decode_token(token_str.to_string(), app_state.env.jwt_secret.as_bytes()) {
+                        token_details
+                    } else {
+                        "anon".to_string()
+                    }
+                } else {
+                    "anon".to_string()
+                }
+            } else if let Some(cookie_header) = req.headers().get(header::COOKIE).and_then(|h| h.to_str().ok()) {
+                // If the client is using cookie-based auth, try to read the token cookie
+                // header looks like: cookie1=val1; token=the.jwt.token; other=val
+                if let Some(pair) = cookie_header.split(';').map(|s| s.trim()).find(|s| s.starts_with("token=")) {
+                    if let Some(tok) = pair.strip_prefix("token=") {
+                        if let Ok(token_details) = crate::utils::token::decode_token(tok.to_string(), app_state.env.jwt_secret.as_bytes()) {
+                            token_details
+                        } else {
+                            "anon".to_string()
+                        }
+                    } else { "anon".to_string() }
+                } else { "anon".to_string() }
+            } else {
+                "anon".to_string()
+            };
 
             let cache_key = format!("cache:GET:{}:{}", uri, user_tag);
 
@@ -213,11 +239,32 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
         // Not cached -> run downstream and cache successful JSON responses
         // capture uri and user_tag before consuming the request
         let uri = req.uri().to_string();
-        let user_tag = req
-            .extensions()
-            .get::<JWTAuthMiddeware>()
-            .map(|j| j.user.id.to_string())
-            .unwrap_or_else(|| "anon".to_string());
+        // Resolve user tag the same way as above so we have a stable key even
+        // when the auth middleware hasn't yet run for this request.
+        let user_tag = if let Some(j) = req.extensions().get::<JWTAuthMiddeware>() {
+            j.user.id.to_string()
+        } else if let Some(auth_header) = req.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()) {
+            if auth_header.starts_with("Bearer ") {
+                let token_str = &auth_header[7..];
+                if let Ok(token_details) = crate::utils::token::decode_token(token_str.to_string(), app_state.env.jwt_secret.as_bytes()) {
+                    token_details
+                } else {
+                    "anon".to_string()
+                }
+            } else {
+                "anon".to_string()
+            }
+        } else if let Some(cookie_header) = req.headers().get(header::COOKIE).and_then(|h| h.to_str().ok()) {
+            if let Some(pair) = cookie_header.split(';').map(|s| s.trim()).find(|s| s.starts_with("token=")) {
+                if let Some(tok) = pair.strip_prefix("token=") {
+                    if let Ok(token_details) = crate::utils::token::decode_token(tok.to_string(), app_state.env.jwt_secret.as_bytes()) {
+                        token_details
+                    } else { "anon".to_string() }
+                } else { "anon".to_string() }
+            } else { "anon".to_string() }
+        } else {
+            "anon".to_string()
+        };
 
         let response = next.run(req).await;
         let status = response.status();
