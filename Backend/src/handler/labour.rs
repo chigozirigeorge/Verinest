@@ -1230,11 +1230,6 @@ pub async fn get_worker_details_smart(
     println!("🔍 [get_worker_details_smart] Found worker profile - ID: {}, User ID: {}, Found as: {}", 
         worker_profile.id, worker_profile.user_id, found_as);
 
-    let worker_profile = app_state.db_client
-        .get_worker_profile_by_id(worker_identifier)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
-
     // Get portfolio using worker_profile.id (this is the CORRECT foreign key)
     let portfolio = match app_state.db_client.get_worker_portfolio(worker_profile.id).await {
         Ok(portfolio_items) => {

@@ -137,6 +137,12 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
         .cloned()
         .ok_or_else(|| HttpError::server_error("AppState missing from request extensions".to_string()))?;
 
+    // Ensure Option<JWTAuthMiddeware> extension exists so handlers that extract
+    // `Extension<Option<JWTAuthMiddeware>>` don't error when the auth middleware
+    // hasn't run yet. We'll set to None here and overwrite with Some(...) when
+    // we successfully decode a token below.
+    req.extensions_mut().insert::<Option<JWTAuthMiddeware>>(None);
+
     // If Redis not available, just run the request through
     let redis_opt = app_state.db_client.redis_client.clone();
 
@@ -196,37 +202,50 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
         if let Some(ref redis_arc) = redis_opt {
             // Build cache key: include full URI and any authenticated user id
             let uri = req.uri().to_string();
-            // Resolve user tag: prefer JWTAuthMiddeware (if auth middleware ran),
-            // otherwise try to decode a Bearer token from the Authorization header.
-            let user_tag = if let Some(j) = req.extensions().get::<JWTAuthMiddeware>() {
-                j.user.id.to_string()
+            // Resolve user tag: prefer JWTAuthMiddeware (if auth middleware ran).
+            // Otherwise try to decode a Bearer token from the Authorization header
+            // or a `token` cookie. If we successfully decode a token and resolve
+            // the user, insert a JWTAuthMiddeware into the request extensions so
+            // downstream handlers that expect the auth extension won't panic.
+            let mut user_tag = "anon".to_string();
+            if let Some(j) = req.extensions().get::<JWTAuthMiddeware>() {
+                user_tag = j.user.id.to_string();
             } else if let Some(auth_header) = req.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()) {
-                // Prefer Authorization header Bearer token
                 if auth_header.starts_with("Bearer ") {
                     let token_str = &auth_header[7..];
                     if let Ok(token_details) = crate::utils::token::decode_token(token_str.to_string(), app_state.env.jwt_secret.as_bytes()) {
-                        token_details
-                    } else {
-                        "anon".to_string()
+                        // token_details should be the user id string; try to parse and resolve the user
+                        if let Ok(user_uuid) = uuid::Uuid::parse_str(&token_details) {
+                            if let Ok(Some(user)) = app_state.db_client.get_user(Some(user_uuid), None, None, None).await {
+                                // Insert the auth extension so handlers expecting it won't fail
+                                req.extensions_mut().insert(JWTAuthMiddeware { user: user.clone() });
+                                // Also insert Option<JWTAuthMiddeware> = Some(...) so extractors
+                                // looking for Extension<Option<JWTAuthMiddeware>> find it.
+                                req.extensions_mut().insert::<Option<JWTAuthMiddeware>>(Some(JWTAuthMiddeware { user: user.clone() }));
+                                user_tag = user_uuid.to_string();
+                            } else {
+                                // leave as anon if user not found
+                            }
+                        } else {
+                            // token decode ok but not a valid uuid
+                        }
                     }
-                } else {
-                    "anon".to_string()
                 }
             } else if let Some(cookie_header) = req.headers().get(header::COOKIE).and_then(|h| h.to_str().ok()) {
-                // If the client is using cookie-based auth, try to read the token cookie
-                // header looks like: cookie1=val1; token=the.jwt.token; other=val
                 if let Some(pair) = cookie_header.split(';').map(|s| s.trim()).find(|s| s.starts_with("token=")) {
                     if let Some(tok) = pair.strip_prefix("token=") {
                         if let Ok(token_details) = crate::utils::token::decode_token(tok.to_string(), app_state.env.jwt_secret.as_bytes()) {
-                            token_details
-                        } else {
-                            "anon".to_string()
+                            if let Ok(user_uuid) = uuid::Uuid::parse_str(&token_details) {
+                                if let Ok(Some(user)) = app_state.db_client.get_user(Some(user_uuid), None, None, None).await {
+                                    req.extensions_mut().insert(JWTAuthMiddeware { user: user.clone() });
+                                    req.extensions_mut().insert::<Option<JWTAuthMiddeware>>(Some(JWTAuthMiddeware { user: user.clone() }));
+                                    user_tag = user_uuid.to_string();
+                                }
+                            }
                         }
-                    } else { "anon".to_string() }
-                } else { "anon".to_string() }
-            } else {
-                "anon".to_string()
-            };
+                    }
+                }
+            }
 
             let cache_key = format!("cache:GET:{}:{}", uri, user_tag);
 
@@ -241,30 +260,37 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
         let uri = req.uri().to_string();
         // Resolve user tag the same way as above so we have a stable key even
         // when the auth middleware hasn't yet run for this request.
-        let user_tag = if let Some(j) = req.extensions().get::<JWTAuthMiddeware>() {
-            j.user.id.to_string()
+        let mut user_tag = "anon".to_string();
+        if let Some(j) = req.extensions().get::<JWTAuthMiddeware>() {
+            user_tag = j.user.id.to_string();
         } else if let Some(auth_header) = req.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()) {
             if auth_header.starts_with("Bearer ") {
                 let token_str = &auth_header[7..];
                 if let Ok(token_details) = crate::utils::token::decode_token(token_str.to_string(), app_state.env.jwt_secret.as_bytes()) {
-                    token_details
-                } else {
-                    "anon".to_string()
+                    if let Ok(user_uuid) = uuid::Uuid::parse_str(&token_details) {
+            if let Ok(Some(user)) = app_state.db_client.get_user(Some(user_uuid), None, None, None).await {
+                req.extensions_mut().insert(JWTAuthMiddeware { user: user.clone() });
+                req.extensions_mut().insert::<Option<JWTAuthMiddeware>>(Some(JWTAuthMiddeware { user: user.clone() }));
+                user_tag = user_uuid.to_string();
+            }
+                    }
                 }
-            } else {
-                "anon".to_string()
             }
         } else if let Some(cookie_header) = req.headers().get(header::COOKIE).and_then(|h| h.to_str().ok()) {
             if let Some(pair) = cookie_header.split(';').map(|s| s.trim()).find(|s| s.starts_with("token=")) {
                 if let Some(tok) = pair.strip_prefix("token=") {
                     if let Ok(token_details) = crate::utils::token::decode_token(tok.to_string(), app_state.env.jwt_secret.as_bytes()) {
-                        token_details
-                    } else { "anon".to_string() }
-                } else { "anon".to_string() }
-            } else { "anon".to_string() }
-        } else {
-            "anon".to_string()
-        };
+                        if let Ok(user_uuid) = uuid::Uuid::parse_str(&token_details) {
+                            if let Ok(Some(user)) = app_state.db_client.get_user(Some(user_uuid), None, None, None).await {
+                req.extensions_mut().insert(JWTAuthMiddeware { user: user.clone() });
+                req.extensions_mut().insert::<Option<JWTAuthMiddeware>>(Some(JWTAuthMiddeware { user: user.clone() }));
+                user_tag = user_uuid.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let response = next.run(req).await;
         let status = response.status();
