@@ -2055,6 +2055,122 @@ pub async fn get_contract_details(
     )))
 }
 
+pub async fn get_public_worker_profile(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Path(username): Path<String>,
+) -> Result<impl IntoResponse, HttpError> {
+    println!("🔍 [get_public_worker_profile] Looking up user by username: {}", username);
+
+    // Get user by username
+    let user = app_state.db_client
+        .get_user(None, Some(&username), None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    println!("✅ [get_public_worker_profile] Found user: {}", user.id);
+
+    // Check if user has a worker profile
+    let worker_profile = match app_state.db_client.get_worker_profile(user.id).await {
+        Ok(profile) => profile,
+        Err(_) => {
+            return Err(HttpError::bad_request("This user doesn't have a worker profile"));
+        }
+    };
+
+    // Get portfolio items
+    let portfolio = app_state.db_client
+        .get_worker_portfolio(worker_profile.id)
+        .await
+        .unwrap_or_default();
+
+    // Get reviews
+    let reviews = app_state.db_client
+        .get_worker_reviews(user.id)
+        .await
+        .unwrap_or_default();
+
+    // Calculate average rating
+    let avg_rating = if !reviews.is_empty() {
+        reviews.iter().map(|r| r.rating).sum::<i32>() as f32 / reviews.len() as f32
+    } else {
+        0.0
+    };
+
+    let response = PublicWorkerProfileResponse {
+        user: PublicUserInfo {
+            id: user.id,
+            name: user.name,
+            username: user.username,
+            avatar_url: user.avatar_url,
+            trust_score: user.trust_score,
+            verified: user.verified,
+        },
+        profile: PublicWorkerProfile {
+            profile_id: worker_profile.id,
+            category: worker_profile.category.to_str().to_string(),
+            experience_years: worker_profile.experience_years,
+            description: worker_profile.description,
+            hourly_rate: worker_profile.hourly_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
+            daily_rate: worker_profile.daily_rate.as_ref().and_then(|bd| bd.to_f64()).unwrap_or(0.0),
+            location_state: worker_profile.location_state,
+            location_city: worker_profile.location_city,
+            is_available: worker_profile.is_available.unwrap_or(false),
+            rating: avg_rating,
+            completed_jobs: worker_profile.completed_jobs.unwrap_or(0),
+            member_since: user.created_at,
+        },
+        portfolio: portfolio.into_iter().map(|item| PublicPortfolioItem {
+            id: item.id,
+            title: item.title,
+            description: item.description,
+            image_url: item.image_url,
+            project_date: item.project_date,
+        }).collect(),
+        reviews: reviews.into_iter().map(|review| PublicReview {
+            id: review.id,
+            rating: review.rating,
+            comment: review.comment,
+            created_at: review.created_at.unwrap_or_else(Utc::now),
+            reviewer_name: "Anonymous".to_string(), // You might want to fetch reviewer details
+        }).collect(),
+    };
+
+    Ok(Json(ApiResponse::success(
+        "Public worker profile retrieved successfully",
+        response,
+    )))
+}
+
+pub async fn get_public_worker_portfolio(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Path(username): Path<String>,
+) -> Result<impl IntoResponse, HttpError> {
+    // Get user by username
+    let user = app_state.db_client
+        .get_user(None, Some(&username), None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    // Get worker profile
+    let worker_profile = app_state.db_client
+        .get_worker_profile(user.id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Get portfolio
+    let portfolio = app_state.db_client
+        .get_worker_portfolio(worker_profile.id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(
+        "Public portfolio retrieved successfully",
+        portfolio,
+    )))
+}
+
 // Add these structs to your labour.rs file
 
 #[derive(Debug, serde::Serialize)]

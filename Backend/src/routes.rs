@@ -14,10 +14,7 @@ use crate::{
         feed::get_feed,
         google_oauth::oauth_handler, 
         labour::{
-            get_job_details, 
-            get_worker_details, 
-            search_jobs, 
-            search_workers
+            get_job_details, get_public_worker_portfolio, get_public_worker_profile, get_worker_details, search_jobs, search_workers
         }, 
         naira_wallet::{
             flutterwave_webhook, 
@@ -81,7 +78,10 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/feed", get(get_feed))
         .route("/jobs/:job_id", get(get_job_details))
         .route("/workers/search", get(search_workers))
-        .route("/workers/:worker_id", get(get_worker_details));
+        .route("/workers/:worker_id", get(get_worker_details))
+        .route("/profile/:username", get(get_public_worker_profile))
+        .route("/profile/:username/portfolio", get(get_public_worker_portfolio));
+
 
     // Protected labour routes (require auth)
 let protected_labour_routes = Router::new()

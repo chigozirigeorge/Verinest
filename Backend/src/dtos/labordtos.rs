@@ -558,3 +558,55 @@ pub struct RejectApplicationDto {
     #[validate(length(min = 1, max = 500, message = "Rejection reason must be between 1 and 500 characters"))]
     pub rejection_reason: String,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublicWorkerProfileResponse {
+    pub user: PublicUserInfo,
+    pub profile: PublicWorkerProfile,
+    pub portfolio: Vec<PublicPortfolioItem>,
+    pub reviews: Vec<PublicReview>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublicUserInfo {
+    pub id: Uuid,
+    pub name: String,
+    pub username: String,
+    pub avatar_url: Option<String>,
+    pub trust_score: i32,
+    pub verified: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublicWorkerProfile {
+    pub profile_id: Uuid,
+    pub category: String,
+    pub experience_years: i32,
+    pub description: String,
+    pub hourly_rate: f64,
+    pub daily_rate: f64,
+    pub location_state: String,
+    pub location_city: String,
+    pub is_available: bool,
+    pub rating: f32,
+    pub completed_jobs: i64,
+    pub member_since: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublicPortfolioItem {
+    pub id: Uuid,
+    pub title: String,
+    pub description: String,
+    pub image_url: String,
+    pub project_date: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublicReview {
+    pub id: Uuid,
+    pub rating: i32,
+    pub comment: String,
+    pub created_at: DateTime<Utc>,
+    pub reviewer_name: String,
+}
