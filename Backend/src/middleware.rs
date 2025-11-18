@@ -19,6 +19,12 @@ use crate::{
     utils::token,
     AppState
 };
+use crate::db::cache::CacheHelper;
+use axum::response::Response;
+use axum::body;
+use axum::Json;
+use axum::http::Method;
+use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct JWTAuthMiddeware {
@@ -117,4 +123,155 @@ pub async fn role_check(
     }
 
     Ok(next.run(req).await)
+}
+
+/// Middleware that implements simple caching for GET requests (1 hour TTL)
+/// and invalidates relevant cache entries on POST/PUT/DELETE. It also
+/// enforces simple rate limits for sensitive endpoints (login, change password,
+/// verify pin) based on an IP-like header.
+pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl IntoResponse, HttpError> {
+    // Try to get AppState from request extensions (set in main.rs router layering)
+    let app_state = req
+        .extensions()
+        .get::<Arc<AppState>>()
+        .cloned()
+        .ok_or_else(|| HttpError::server_error("AppState missing from request extensions".to_string()))?;
+
+    // If Redis not available, just run the request through
+    let redis_opt = app_state.db_client.redis_client.clone();
+
+    // Rate limiting: check some sensitive endpoints by IP/header
+    let path = req.uri().path().to_string();
+    let method = req.method().clone();
+    if let Some(ref redis_arc) = redis_opt {
+
+        // Determine an IP key (prefer X-Forwarded-For header, fall back to remote unknown)
+        let ip = req
+            .headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Apply rate limits for specific endpoints
+        if method == Method::POST && path == "/api/auth/login" {
+            let key = format!("rl:login:{}", ip);
+            let mut conn = redis_arc.lock().await;
+            let count: i64 = redis::cmd("INCR").arg(&key).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+            if count == 1 {
+                let _ : () = redis::cmd("EXPIRE").arg(&key).arg(3600).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+            }
+            if count > 5 {
+                return Err(HttpError::new(format!("Too many attempts"), StatusCode::TOO_MANY_REQUESTS));
+            }
+        }
+
+        if method == Method::PUT && path == "/api/users/password" {
+            let key = format!("rl:change_password:{}", ip);
+            let mut conn = redis_arc.lock().await;
+            let count: i64 = redis::cmd("INCR").arg(&key).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+            if count == 1 {
+                let _ : () = redis::cmd("EXPIRE").arg(&key).arg(3600).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+            }
+            if count > 3 {
+                return Err(HttpError::new(format!("Too many attempts"), StatusCode::TOO_MANY_REQUESTS));
+            }
+        }
+
+        if method == Method::POST && path == "/api/users/transaction-pin/verify" {
+            let key = format!("rl:verify_pin:{}", ip);
+            let mut conn = redis_arc.lock().await;
+            let count: i64 = redis::cmd("INCR").arg(&key).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+            if count == 1 {
+                let _ : () = redis::cmd("EXPIRE").arg(&key).arg(3600).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+            }
+            if count > 3 {
+                return Err(HttpError::new(format!("Too many attempts"), StatusCode::TOO_MANY_REQUESTS));
+            }
+        }
+    }
+
+    // If request is GET, attempt to serve from cache
+    if method == Method::GET {
+        if let Some(ref redis_arc) = redis_opt {
+            // Build cache key: include full URI and any authenticated user id
+            let uri = req.uri().to_string();
+            let user_tag = req
+                .extensions()
+                .get::<JWTAuthMiddeware>()
+                .map(|j| j.user.id.to_string())
+                .unwrap_or_else(|| "anon".to_string());
+
+            let cache_key = format!("cache:GET:{}:{}", uri, user_tag);
+
+            if let Ok(Some(cached_value)) = CacheHelper::get::<Value>(redis_opt.as_ref().unwrap(), &cache_key).await {
+                // Return cached JSON directly
+                return Ok(Json(cached_value).into_response());
+            }
+        }
+
+        // Not cached -> run downstream and cache successful JSON responses
+        // capture uri and user_tag before consuming the request
+        let uri = req.uri().to_string();
+        let user_tag = req
+            .extensions()
+            .get::<JWTAuthMiddeware>()
+            .map(|j| j.user.id.to_string())
+            .unwrap_or_else(|| "anon".to_string());
+
+        let response = next.run(req).await;
+        let status = response.status();
+        if status.is_success() {
+            if let Some(ref _redis_arc) = redis_opt {
+                // Only attempt to buffer/cache if the response is JSON per headers
+                if let Some(ct) = response.headers().get(header::CONTENT_TYPE) {
+                    if let Ok(ct_str) = ct.to_str() {
+                        if ct_str.contains("application/json") {
+                            // Decompose response and buffer body for caching
+                            let (parts, body) = response.into_parts();
+                            if let Ok(bytes) = body::to_bytes(body, 64 * 1024).await {
+                                if let Ok(body_str) = String::from_utf8(bytes.to_vec()) {
+                                    if let Ok(json_val) = serde_json::from_str::<Value>(&body_str) {
+                                        // Recompute cache key same as above
+                                        let cache_key = format!("cache:GET:{}:{}", uri, user_tag);
+                                        let _ = CacheHelper::set(redis_opt.as_ref().unwrap(), &cache_key, &json_val, 3600).await;
+                                        // Return the JSON response (reconstructed)
+                                        return Ok(Json(json_val).into_response());
+                                    }
+                                }
+                            }
+                            // If buffering or parsing failed, return server error
+                            return Err(HttpError::server_error("Failed to buffer/parse JSON response for caching".to_string()));
+                        }
+                    }
+                }
+            }
+        }
+
+        return Ok(response);
+    }
+
+    // For POST/PUT/DELETE: run the handler and then invalidate related cache patterns
+    let mut response = next.run(req).await;
+    if response.status().is_success() {
+        if let Some(ref redis_arc) = redis_opt {
+            // Attempt to derive a key pattern from the request path (we computed earlier)
+            let path = path.clone();
+            // Build a generic pattern by replacing UUID-like segments with *
+            let mut pattern_parts: Vec<String> = Vec::new();
+            for seg in path.split('/') {
+                if seg.is_empty() { continue; }
+                if seg.len() == 36 && seg.chars().nth(8) == Some('-') {
+                    pattern_parts.push("*".to_string());
+                } else {
+                    pattern_parts.push(seg.to_string());
+                }
+            }
+            let pattern_path = format!("/{}", pattern_parts.join("/"));
+            let delete_pattern = format!("cache:*{}*", pattern_path);
+            let _ = CacheHelper::delete_pattern(redis_opt.as_ref().unwrap(), &delete_pattern).await;
+        }
+    }
+
+    Ok(response)
 }
