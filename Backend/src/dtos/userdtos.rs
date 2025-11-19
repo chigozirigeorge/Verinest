@@ -8,7 +8,7 @@ use serde_json;
 use std::borrow::Cow;
 
 
-use crate::models::usermodel::*;
+use crate::models::{subscriptionmodels::SubscriptionTier, usermodel::*};
 
 #[derive(Validate, Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RegisterUserWithReferralDto {
@@ -80,7 +80,13 @@ pub struct FilterUserDto {
     pub lga: String,
     pub email_verified: bool,
     pub document_verified: bool,
-     pub transaction_pin_hash: Option<String>,
+    pub subscription_tier: SubscriptionTier,
+    pub role_change_count: Option<i32>,
+    pub referral_code: Option<String>,
+    pub referral_count: Option<i32>,
+    pub role_change_reset_at: DateTime<Utc>,
+    pub nearest_landmark: Option<String>,
+    pub transaction_pin_hash: Option<String>,
     pub verification_status: Option<String>,
     pub wallet_address: Option<String>,
     pub avatar_url: Option<String>,
@@ -104,6 +110,12 @@ impl FilterUserDto {
             nationality: user.nationality.clone(),
             lga: user.lga.clone().unwrap_or_default(),
             dob: user.dob.unwrap_or_else(|| chrono::Utc::now()),
+            subscription_tier: user.subscription_tier.clone(),
+            referral_code: user.referral_code.clone(),
+            nearest_landmark: user.nearest_landmark.clone(),
+            referral_count: user.referral_count,
+            role_change_count: user.role_change_count,
+            role_change_reset_at: user.role_change_reset_at.unwrap_or_else(|| chrono::Utc::now()),
             transaction_pin_hash: user.transaction_pin_hash.clone(),
             wallet_address: user.wallet_address.clone(),
             avatar_url: user.avatar_url.clone(),
@@ -111,10 +123,6 @@ impl FilterUserDto {
             created_at: user.created_at,
             updated_at: user.updated_at,
         }
-    }
-
-    pub fn filter_users(user: &[User]) -> Vec<FilterUserDto> {
-        user.iter().map(FilterUserDto::filter_user).collect()
     }
 }
 
