@@ -406,4 +406,7 @@ pub async fn send_service_inquiry_email(
     ];
 
     send_email(to_email, subject, template_path, &placeholders).await
+
 }
+
+//
