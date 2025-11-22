@@ -87,7 +87,9 @@ async fn send_via_resend(
         .map_err(|_| "RESEND_API_KEY environment variable not set".to_string())?;
 
     let from_email = std::env::var("FROM_EMAIL")
-        .unwrap_or_else(|_| "Verinest <noreply@verinest.com>".to_string());
+        .unwrap_or_else(|_| "Verinest <noreply@verinest.xyz>".to_string());
+
+    tracing::info!("🔍 Sending email from: {}", from_email);
 
     // Validate API key format
     if resend_api_key.is_empty() {
