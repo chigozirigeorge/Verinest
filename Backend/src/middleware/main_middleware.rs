@@ -21,6 +21,7 @@ use crate::{
     AppState
 };
 use crate::db::cache::CacheHelper;
+use crate::middleware::cache_invalidation::{CacheInvalidationConfig, invalidate_cache_for_request, should_cache_request};
 use axum::body;
 use axum::Json;
 use axum::http::Method;
@@ -125,33 +126,31 @@ pub async fn role_check(
     Ok(next.run(req).await)
 }
 
-/// Middleware that implements simple caching for GET requests (1 hour TTL)
-/// and invalidates relevant cache entries on POST/PUT/DELETE. It also
-/// enforces simple rate limits for sensitive endpoints (login, change password,
-/// verify pin) based on an IP-like header.
+/// Middleware that implements smart caching for GET requests and intelligent cache invalidation
+/// for POST/PUT/DELETE requests based on endpoint groupings. It also enforces rate limits
+/// for sensitive endpoints.
 pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl IntoResponse, HttpError> {
-    // Try to get AppState from request extensions (set in main.rs router layering)
+    // Initialize cache invalidation config
+    let cache_config = CacheInvalidationConfig::new();
+    
+    // Try to get AppState from request extensions
     let app_state = req
         .extensions()
         .get::<Arc<AppState>>()
         .cloned()
         .ok_or_else(|| HttpError::server_error("AppState missing from request extensions".to_string()))?;
 
-    // Ensure Option<JWTAuthMiddeware> extension exists so handlers that extract
-    // `Extension<Option<JWTAuthMiddeware>>` don't error when the auth middleware
-    // hasn't run yet. We'll set to None here and overwrite with Some(...) when
-    // we successfully decode a token below.
+    // Ensure Option<JWTAuthMiddeware> extension exists
     req.extensions_mut().insert::<Option<JWTAuthMiddeware>>(None);
 
-    // If Redis not available, just run the request through
-    let redis_opt = app_state.db_client.redis_client.clone();
-
-    // Rate limiting: check some sensitive endpoints by IP/header
+    // Get request info
     let path = req.uri().path().to_string();
     let method = req.method().clone();
-    if let Some(ref redis_arc) = redis_opt {
+    
+    tracing::info!("🔍 Request: {} {}", method, path);
 
-        // Determine an IP key (prefer X-Forwarded-For header, fall back to remote unknown)
+    // Rate limiting for sensitive endpoints
+    if let Some(ref redis_arc) = app_state.db_client.redis_client {
         let ip = req
             .headers()
             .get("x-forwarded-for")
@@ -197,16 +196,16 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
         }
     }
 
-    // If request is GET, attempt to serve from cache
+    // Handle GET requests - serve from cache if available
     if method == Method::GET {
-        if let Some(ref redis_arc) = redis_opt {
-            // Build cache key: include full URI and any authenticated user id
-            let uri = req.uri().to_string();
-            // Resolve user tag: prefer JWTAuthMiddeware (if auth middleware ran).
-            // Otherwise try to decode a Bearer token from the Authorization header
-            // or a `token` cookie. If we successfully decode a token and resolve
-            // the user, insert a JWTAuthMiddeware into the request extensions so
-            // downstream handlers that expect the auth extension won't panic.
+        // Check if this endpoint should be cached
+        if !should_cache_request(&method.to_string(), &path, &cache_config) {
+            tracing::info!("🔍 Endpoint {} {} not cacheable, proceeding", method, path);
+            return Ok(next.run(req).await);
+        }
+
+        if let Some(ref redis_arc) = app_state.db_client.redis_client {
+            // Resolve user for cache key
             let mut user_tag = "anon".to_string();
             if let Some(j) = req.extensions().get::<JWTAuthMiddeware>() {
                 user_tag = j.user.id.to_string();
@@ -214,20 +213,12 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
                 if auth_header.starts_with("Bearer ") {
                     let token_str = &auth_header[7..];
                     if let Ok(token_details) = crate::utils::token::decode_token(token_str.to_string(), app_state.env.jwt_secret.as_bytes()) {
-                        // token_details should be the user id string; try to parse and resolve the user
                         if let Ok(user_uuid) = uuid::Uuid::parse_str(&token_details) {
                             if let Ok(Some(user)) = app_state.db_client.get_user(Some(user_uuid), None, None, None).await {
-                                // Insert the auth extension so handlers expecting it won't fail
                                 req.extensions_mut().insert(JWTAuthMiddeware { user: user.clone() });
-                                // Also insert Option<JWTAuthMiddeware> = Some(...) so extractors
-                                // looking for Extension<Option<JWTAuthMiddeware>> find it.
                                 req.extensions_mut().insert::<Option<JWTAuthMiddeware>>(Some(JWTAuthMiddeware { user: user.clone() }));
                                 user_tag = user_uuid.to_string();
-                            } else {
-                                // leave as anon if user not found
                             }
-                        } else {
-                            // token decode ok but not a valid uuid
                         }
                     }
                 }
@@ -247,68 +238,33 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
                 }
             }
 
-            let cache_key = format!("cache:GET:{}:{}", uri, user_tag);
+            let cache_key = format!("cache:GET:{}:{}", req.uri().to_string(), user_tag);
+            tracing::info!("🔍 Checking cache for key: {}", cache_key);
 
-            if let Ok(Some(cached_value)) = CacheHelper::get::<Value>(redis_opt.as_ref().unwrap(), &cache_key).await {
-                // Return cached JSON directly
+            if let Ok(Some(cached_value)) = CacheHelper::get::<Value>(redis_arc, &cache_key).await {
+                tracing::info!("🎯 Cache HIT for: {}", cache_key);
                 return Ok(Json(cached_value).into_response());
+            } else {
+                tracing::info!("❌ Cache MISS for: {}", cache_key);
             }
-        }
 
-        // Not cached -> run downstream and cache successful JSON responses
-        // capture uri and user_tag before consuming the request
-        let uri = req.uri().to_string();
-        // Resolve user tag the same way as above so we have a stable key even
-        // when the auth middleware hasn't yet run for this request.
-        let mut user_tag = "anon".to_string();
-        if let Some(j) = req.extensions().get::<JWTAuthMiddeware>() {
-            user_tag = j.user.id.to_string();
-        } else if let Some(auth_header) = req.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()) {
-            if auth_header.starts_with("Bearer ") {
-                let token_str = &auth_header[7..];
-                if let Ok(token_details) = crate::utils::token::decode_token(token_str.to_string(), app_state.env.jwt_secret.as_bytes()) {
-                    if let Ok(user_uuid) = uuid::Uuid::parse_str(&token_details) {
-            if let Ok(Some(user)) = app_state.db_client.get_user(Some(user_uuid), None, None, None).await {
-                req.extensions_mut().insert(JWTAuthMiddeware { user: user.clone() });
-                req.extensions_mut().insert::<Option<JWTAuthMiddeware>>(Some(JWTAuthMiddeware { user: user.clone() }));
-                user_tag = user_uuid.to_string();
-            }
-                    }
-                }
-            }
-        } else if let Some(cookie_header) = req.headers().get(header::COOKIE).and_then(|h| h.to_str().ok()) {
-            if let Some(pair) = cookie_header.split(';').map(|s| s.trim()).find(|s| s.starts_with("token=")) {
-                if let Some(tok) = pair.strip_prefix("token=") {
-                    if let Ok(token_details) = crate::utils::token::decode_token(tok.to_string(), app_state.env.jwt_secret.as_bytes()) {
-                        if let Ok(user_uuid) = uuid::Uuid::parse_str(&token_details) {
-                            if let Ok(Some(user)) = app_state.db_client.get_user(Some(user_uuid), None, None, None).await {
-                req.extensions_mut().insert(JWTAuthMiddeware { user: user.clone() });
-                req.extensions_mut().insert::<Option<JWTAuthMiddeware>>(Some(JWTAuthMiddeware { user: user.clone() }));
-                user_tag = user_uuid.to_string();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let response = next.run(req).await;
-        let status = response.status();
-        if status.is_success() {
-            if let Some(ref _redis_arc) = redis_opt {
-                // Only attempt to buffer/cache if the response is JSON per headers
+            // Not cached -> run downstream and cache successful JSON responses
+            let response = next.run(req).await;
+            let status = response.status();
+            
+            if status.is_success() {
                 if let Some(ct) = response.headers().get(header::CONTENT_TYPE) {
                     if let Ok(ct_str) = ct.to_str() {
                         if ct_str.contains("application/json") {
                             // Decompose response and buffer body for caching
                             let (parts, body) = response.into_parts();
-                            if let Ok(bytes) = body::to_bytes(body, 64 * 1024).await {
+                            if let Ok(bytes) = axum::body::to_bytes(body, 64 * 1024).await {
                                 if let Ok(body_str) = String::from_utf8(bytes.to_vec()) {
                                     if let Ok(json_val) = serde_json::from_str::<Value>(&body_str) {
-                                        // Recompute cache key same as above
-                                        let cache_key = format!("cache:GET:{}:{}", uri, user_tag);
-                                        let _ = CacheHelper::set(redis_opt.as_ref().unwrap(), &cache_key, &json_val, 3600).await;
-                                        // Return the JSON response (reconstructed)
+                                        // Cache the response
+                                        let _ = CacheHelper::set(redis_arc, &cache_key, &json_val, 3600).await;
+                                        tracing::info!("💾 Cached response for: {}", cache_key);
+                                        // Return the JSON response
                                         return Ok(Json(json_val).into_response());
                                     }
                                 }
@@ -319,30 +275,20 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
                     }
                 }
             }
-        }
 
-        return Ok(response);
+            return Ok(response);
+        }
     }
 
-    // For POST/PUT/DELETE: run the handler and then invalidate related cache patterns
-    let mut response = next.run(req).await;
+    // For POST/PUT/DELETE: run the handler and then invalidate related cache
+    let response = next.run(req).await;
+    
+    // Only invalidate on successful mutations
     if response.status().is_success() {
-        if let Some(ref redis_arc) = redis_opt {
-            // Attempt to derive a key pattern from the request path (we computed earlier)
-            let path = path.clone();
-            // Build a generic pattern by replacing UUID-like segments with *
-            let mut pattern_parts: Vec<String> = Vec::new();
-            for seg in path.split('/') {
-                if seg.is_empty() { continue; }
-                if seg.len() == 36 && seg.chars().nth(8) == Some('-') {
-                    pattern_parts.push("*".to_string());
-                } else {
-                    pattern_parts.push(seg.to_string());
-                }
+        if let Some(ref redis_arc) = app_state.db_client.redis_client {
+            if let Err(e) = invalidate_cache_for_request(redis_arc, &cache_config, &method.to_string(), &path).await {
+                tracing::error!("🔥 Failed to invalidate cache: {:?}", e);
             }
-            let pattern_path = format!("/{}", pattern_parts.join("/"));
-            let delete_pattern = format!("cache:*{}*", pattern_path);
-            let _ = CacheHelper::delete_pattern(redis_opt.as_ref().unwrap(), &delete_pattern).await;
         }
     }
 

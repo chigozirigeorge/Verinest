@@ -1,8 +1,7 @@
 // Middleware module
 pub mod rate_limit;
+pub mod cache_invalidation;
+pub mod main_middleware;
 
 pub use rate_limit::*;
-
-// Re-export commonly used middleware
-use crate::middleware::rate_limit::RateLimiter;
-pub mod main_middleware;
+pub use cache_invalidation::*;
