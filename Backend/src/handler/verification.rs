@@ -18,7 +18,7 @@ use crate::{
     mail::mails::send_otp_email,
     middleware::JWTAuthMiddeware,
     models::usermodel::{VerificationStatus, VerificationType, UserRole},
-    utils::{image_utils, otp_generator},
+    utils::{otp_generator},
     AppState,
 };
 

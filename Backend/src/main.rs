@@ -112,12 +112,40 @@ async fn main() {
 
     // Connect to PostgreSQL
     let pool = match PgPoolOptions::new()
-            .max_connections(10)
+            .max_connections(20)
+            .min_connections(5)
             .connect(&config.database_url)
             .await
     {
         Ok(pool) => {
             println!("✅ Connection to the database is successful!");
+            
+            // Log connection pool stats for monitoring
+            println!("📊 Connection Pool Stats:");
+            println!("   - Max connections: 20");
+            println!("   - Min connections: 5");
+            
+            // Store max connections for monitoring
+            let max_connections = 20;
+            
+            // Start a background task to monitor pool health
+            let pool_for_monitoring = pool.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    let size = pool_for_monitoring.size();
+                    let idle = pool_for_monitoring.num_idle();
+                    tracing::debug!("🔍 Pool Status - Active: {}, Idle: {}, Total: {}", 
+                        size - idle as u32, idle, size);
+                    
+                    // Warning if pool is getting full
+                    if size >= max_connections * 8 / 10 {
+                        tracing::warn!("⚠️  Connection pool at 80% capacity! Consider increasing max_connections");
+                    }
+                }
+            });
+            
             pool
         }
         Err(err) => {

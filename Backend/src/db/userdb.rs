@@ -60,6 +60,13 @@ pub trait UserExt {
         role: UserRole,
     ) -> Result<User, sqlx::Error>;
 
+    async fn update_user_role_atomic(
+        &self,
+        user_id: Uuid,
+        new_role: UserRole,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<User, sqlx::Error>;
+
     async fn update_user_password(
         &self,
         user_id: Uuid,
@@ -76,6 +83,14 @@ pub trait UserExt {
         &self,
         user_id: Uuid,
         transaction_pin_hash: &str,
+    ) -> Result<User, sqlx::Error>;
+
+    async fn update_user_profile(
+        &self,
+        user_id: Uuid,
+        phone_number: Option<&str>,
+        lga: Option<&str>,
+        nearest_landmark: Option<&str>,
     ) -> Result<User, sqlx::Error>;
 
     async fn verifed_token(
@@ -312,7 +327,8 @@ impl UserExt for DBClient {
                 role, trust_score, verified,
                 verification_type,
                 referral_code, referral_count, google_id, avatar_url,
-                wallet_address, verification_status,
+                wallet_address, phone_number,
+                verification_status,
                 nin_number, verification_document_id, facial_verification_id, nearest_landmark,
                 verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                 verification_token, token_expires_at,
@@ -344,7 +360,7 @@ impl UserExt for DBClient {
                 created_at,
                 updated_at
             FROM users
-            WHERE base_role = 'verifier'::user_role
+            WHERE role = 'verifier'::user_role
             AND id NOT IN (
                 SELECT assigned_verifier 
                 FROM disputes 
@@ -372,7 +388,7 @@ impl UserExt for DBClient {
                 created_at,
                 updated_at
             FROM users
-            WHERE base_role = 'admin'::user_role
+            WHERE role = 'admin'::user_role
             LIMIT 1
             "#
         )
@@ -615,7 +631,7 @@ impl UserExt for DBClient {
         sqlx::query_as::<_, User>(
             r#"
             UPDATE users
-            SET base_role = $1, updated_at = NOW()
+            SET role = $1, updated_at = NOW()
             WHERE id = $2
             RETURNING 
                 id, name, username, email, password,
@@ -634,6 +650,44 @@ impl UserExt for DBClient {
         .bind(new_role)
         .bind(target_id)
         .fetch_one(&self.pool)
+        .await
+    }
+
+    async fn update_user_role_atomic(
+        &self,
+        user_id: Uuid,
+        new_role: UserRole,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            r#"
+            UPDATE users 
+            SET role = $1, 
+                role_change_count = COALESCE(role_change_count, 0) + 1,
+                role_change_reset_at = CASE 
+                    WHEN role_change_reset_at IS NULL OR NOW() > role_change_reset_at 
+                    THEN NOW() + INTERVAL '30 days'
+                    ELSE role_change_reset_at
+                END,
+                updated_at = NOW()
+            WHERE id = $2
+            RETURNING 
+                id, name, username, email, password,
+                    role, trust_score, verified,
+                    verification_type,
+                    referral_code, referral_count, google_id, avatar_url,
+                    wallet_address, verification_status,
+                    nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
+                    verification_token, token_expires_at,
+                    subscription_tier, role_change_count, role_change_reset_at,
+                    created_at,
+                    updated_at
+            "#
+        )
+        .bind(new_role)
+        .bind(user_id)
+        .fetch_one(&mut **tx)
         .await
     }
 
@@ -1235,7 +1289,7 @@ impl UserExt for DBClient {
             r#"
             SELECT 
                 id, name, username, email, password,
-                base_role, trust_score, verified,
+                role, trust_score, verified,
                 verification_type,
                 referral_code, referral_count, google_id, avatar_url,
                 wallet_address, verification_status,
@@ -1534,6 +1588,44 @@ impl UserExt for DBClient {
         .bind(new_count)
         .bind(reset_at)
         .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    async fn update_user_profile(
+        &self,
+        user_id: Uuid,
+        phone_number: Option<&str>,
+        lga: Option<&str>,
+        nearest_landmark: Option<&str>,
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            r#"
+            UPDATE users 
+            SET phone_number = COALESCE($2, phone_number),
+                lga = COALESCE($3, lga),
+                nearest_landmark = COALESCE($4, nearest_landmark),
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING 
+                id, name, username, email, password,
+                role, trust_score, verified,
+                verification_type,
+                referral_code, referral_count, google_id, avatar_url,
+                wallet_address, phone_number,
+                verification_status,
+                nin_number, verification_document_id, facial_verification_id, nearest_landmark,
+                verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
+                verification_token, token_expires_at,
+                subscription_tier, role_change_count, role_change_reset_at,
+                created_at,
+                updated_at
+            "#
+        )
+        .bind(user_id)
+        .bind(phone_number)
+        .bind(lga)
+        .bind(nearest_landmark)
         .fetch_one(&self.pool)
         .await
     }

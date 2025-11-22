@@ -11,6 +11,42 @@ use std::borrow::Cow;
 use crate::models::{subscriptionmodels::SubscriptionTier, usermodel::*};
 
 #[derive(Validate, Debug, Default, Clone, Serialize, Deserialize)]
+pub struct UpdateUserProfileDto {
+    #[validate(
+        length(min = 10, max = 20, message = "Phone number must be between 10-20 characters")
+    )]
+    pub phone_number: Option<String>,
+
+    #[validate(
+        length(min = 2, max = 100, message = "LGA must be between 2-100 characters")
+    )]
+    pub lga: Option<String>,
+
+    #[validate(
+        length(min = 2, max = 255, message = "Nearest landmark must be between 2-255 characters")
+    )]
+    pub nearest_landmark: Option<String>,
+}
+
+// Custom validation for phone numbers
+impl UpdateUserProfileDto {
+    pub fn validate_phone_number(&self) -> Result<(), ValidationError> {
+        if let Some(phone) = &self.phone_number {
+            // Basic phone number validation - supports international formats
+            let phone_regex = regex::Regex::new(r"^(\+?[0-9]{1,3}[- ]?)?[0-9]{3}[- ]?[0-9]{3}[- ]?[0-9]{4}$")
+                .map_err(|_| ValidationError::new("Invalid phone regex"))?;
+            
+            if !phone_regex.is_match(phone) {
+                let mut error = ValidationError::new("invalid_phone");
+                error.message = Some(Cow::from("Phone number must be in a valid format (e.g., +1234567890 or 123-456-7890)"));
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Validate, Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RegisterUserWithReferralDto {
     #[validate(length(min = 1, message = "Name is required"))]
     pub name: String,
@@ -311,10 +347,10 @@ pub struct RoleInfo {
 // Validation function for self-upgrade roles
 fn validate_upgrade_role(role: &UserRole) -> Result<(), ValidationError> {
     match role {
-        UserRole::Worker | UserRole::Employer => Ok(()),
+        UserRole::Worker | UserRole::Employer | UserRole::Vendor => Ok(()),
         _ => {
             let mut err = ValidationError::new("invalid_upgrade_role");
-            err.add_param(Cow::from("expected"), &"Worker or Employer");
+            err.add_param(Cow::from("expected"), &"Worker, Employer or Vendor");
             Err(err)
         }
     }

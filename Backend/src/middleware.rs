@@ -11,6 +11,7 @@ use axum::{
 
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
+use redis::aio::ConnectionManager;
 
 use crate::{
     db::userdb::UserExt,
@@ -68,11 +69,11 @@ pub async fn auth(
     // ✅ FIX #6: Check if token is blacklisted (user logged out)
     if let Some(redis_client) = &app_state.db_client.redis_client {
         let blacklist_key = format!("token_blacklist:{}", token_details);
-        let mut conn = redis_client.lock().await;
+        let mut conn = ConnectionManager::clone(redis_client);
         
         let is_blacklisted: bool = redis::cmd("EXISTS")
             .arg(&blacklist_key)
-            .query_async(&mut *conn)
+            .query_async(&mut conn)
             .await
             .unwrap_or(false);
         
@@ -162,10 +163,10 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
         // Apply rate limits for specific endpoints
         if method == Method::POST && path == "/api/auth/login" {
             let key = format!("rl:login:{}", ip);
-            let mut conn = redis_arc.lock().await;
-            let count: i64 = redis::cmd("INCR").arg(&key).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+            let mut conn = ConnectionManager::clone(redis_arc);
+            let count: i64 = redis::cmd("INCR").arg(&key).query_async(&mut conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
             if count == 1 {
-                let _ : () = redis::cmd("EXPIRE").arg(&key).arg(3600).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+                let _ : () = redis::cmd("EXPIRE").arg(&key).arg(3600).query_async(&mut conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
             }
             if count > 5 {
                 return Err(HttpError::new(format!("Too many attempts"), StatusCode::TOO_MANY_REQUESTS));
@@ -174,10 +175,10 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
 
         if method == Method::PUT && path == "/api/users/password" {
             let key = format!("rl:change_password:{}", ip);
-            let mut conn = redis_arc.lock().await;
-            let count: i64 = redis::cmd("INCR").arg(&key).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+            let mut conn = ConnectionManager::clone(redis_arc);
+            let count: i64 = redis::cmd("INCR").arg(&key).query_async(&mut conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
             if count == 1 {
-                let _ : () = redis::cmd("EXPIRE").arg(&key).arg(3600).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+                let _ : () = redis::cmd("EXPIRE").arg(&key).arg(3600).query_async(&mut conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
             }
             if count > 3 {
                 return Err(HttpError::new(format!("Too many attempts"), StatusCode::TOO_MANY_REQUESTS));
@@ -186,10 +187,10 @@ pub async fn cache_and_rate_limit(mut req: Request, next: Next) -> Result<impl I
 
         if method == Method::POST && path == "/api/users/transaction-pin/verify" {
             let key = format!("rl:verify_pin:{}", ip);
-            let mut conn = redis_arc.lock().await;
-            let count: i64 = redis::cmd("INCR").arg(&key).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+            let mut conn = ConnectionManager::clone(redis_arc);
+            let count: i64 = redis::cmd("INCR").arg(&key).query_async(&mut conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
             if count == 1 {
-                let _ : () = redis::cmd("EXPIRE").arg(&key).arg(3600).query_async(&mut *conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
+                let _ : () = redis::cmd("EXPIRE").arg(&key).arg(3600).query_async(&mut conn).await.map_err(|e| HttpError::server_error(e.to_string()))?;
             }
             if count > 3 {
                 return Err(HttpError::new(format!("Too many attempts"), StatusCode::TOO_MANY_REQUESTS));

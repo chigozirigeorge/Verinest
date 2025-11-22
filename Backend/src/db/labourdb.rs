@@ -9,7 +9,6 @@ use sqlx::Error as SqlxError;
 use super::db::DBClient;
 use crate::{models::labourmodel::*};
 use crate::models::walletmodels::naira_to_kobo;
-use crate::db::naira_walletdb::NairaWalletExt;
 
 #[async_trait]
 pub trait LaborExt {
@@ -159,6 +158,13 @@ async fn assign_worker_to_job(
         &self,
         contract_id: Uuid,
         signer_role: String,    //employer or worker
+    ) -> Result<JobContract, Error>;
+
+    async fn sign_contract_tx(
+        &self,
+        contract_id: Uuid,
+        signer_role: String,    //employer or worker
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<JobContract, Error>;
 
     //Escrow management
@@ -981,6 +987,43 @@ async fn get_jobs_by_location_and_category(
             )
             .bind(contract_id)
             .fetch_one(&self.pool)
+            .await
+        } else {
+            Err(sqlx::Error::Decode("Invalid signer role".into()))
+        }
+    }
+
+    async fn sign_contract_tx(
+        &self,
+        contract_id: Uuid,
+        signer_role: String,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<JobContract, Error> {
+        if signer_role == "employer" {
+            sqlx::query_as::<_, JobContract>(
+                r#"
+                UPDATE job_contracts 
+                SET signed_by_employer = true
+                WHERE id = $1
+                RETURNING id, job_id, employer_id, worker_id, agreed_rate, agreed_timeline,
+                terms, signed_by_employer, signed_by_worker, contract_date
+                "#
+            )
+            .bind(contract_id)
+            .fetch_one(&mut **tx)
+            .await
+        } else if signer_role == "worker" {
+            sqlx::query_as::<_, JobContract>(
+                r#"
+                UPDATE job_contracts 
+                SET signed_by_worker = true
+                WHERE id = $1
+                RETURNING id, job_id, employer_id, worker_id, agreed_rate, agreed_timeline,
+                terms, signed_by_employer, signed_by_worker, contract_date
+                "#
+            )
+            .bind(contract_id)
+            .fetch_one(&mut **tx)
             .await
         } else {
             Err(sqlx::Error::Decode("Invalid signer role".into()))

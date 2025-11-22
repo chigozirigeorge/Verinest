@@ -4,6 +4,7 @@ use std::sync::Arc;
 use axum::{extract::Query, http::{header, HeaderMap}, response::{IntoResponse, Redirect}, routing::{get, post}, Extension, Json, Router};
 use axum_extra::extract::cookie::Cookie;
 use chrono::{Utc, Duration};
+use redis::aio::ConnectionManager;
 use validator::Validate;
 use uuid::Uuid;
 
@@ -403,14 +404,14 @@ pub async fn logout(
     // Add token to Redis blacklist with expiration equal to token expiration
     if let Some(redis_client) = &app_state.db_client.redis_client {
         let blacklist_key = format!("token_blacklist:{}", user_id);
-        let mut conn = redis_client.lock().await;
+        let mut conn = ConnectionManager::clone(redis_client);
         
         let _ = redis::cmd("SET")
             .arg(&blacklist_key)
             .arg("blacklisted")
             .arg("EX")
             .arg(ttl_seconds)
-            .query_async::<_, String>(&mut *conn)
+            .query_async::<_, String>(&mut conn)
             .await;
         
         tracing::info!("✓ User {} logged out - token blacklisted until Unix timestamp {}", user_id, exp);

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use redis::aio::ConnectionManager;
 use uuid::Uuid;
 use sqlx::Error as SqlxError;
 use sqlx::Row;
@@ -51,9 +52,20 @@ impl AffinityService {
             }
         }
 
-        // If the user has no history, fall back to global popularity in last 30 days
+        // If the user has no history, fall back to global popularity in last 30 days (optimized)
         if user_items.is_empty() {
-            let pop_rows = sqlx::query(r#"SELECT item_id, COUNT(*) as cnt FROM recommendation_interactions WHERE created_at > (NOW() - INTERVAL '30 days') GROUP BY item_id ORDER BY cnt DESC LIMIT $1"#)
+            // Use a more efficient query with LIMIT early and proper indexing
+            let pop_rows = sqlx::query(r#"
+                SELECT item_id, interaction_count as cnt 
+                FROM (
+                    SELECT item_id, COUNT(*) as interaction_count
+                    FROM recommendation_interactions 
+                    WHERE created_at > (NOW() - INTERVAL '30 days')
+                    GROUP BY item_id
+                    ORDER BY interaction_count DESC
+                    LIMIT $1
+                ) popular_items
+            "#)
                 .bind(limit)
                 .fetch_all(&self.db_client.pool)
                 .await?;
@@ -69,16 +81,20 @@ impl AffinityService {
             return Ok(out);
         }
 
-        // 2. Find co-occurring items via users who interacted with the user's items
+        // 2. Find co-occurring items via users who interacted with the user's items (optimized)
         //    This query finds items (not in user's items) and counts distinct users that touched them.
         let rows = sqlx::query(
             r#"
-            SELECT ri.item_id as item_id, COUNT(DISTINCT ri.user_id) as score
+            WITH user_interactions AS (
+                SELECT DISTINCT user_id 
+                FROM recommendation_interactions 
+                WHERE item_id = ANY($1)
+                AND created_at > (NOW() - INTERVAL '90 days')
+            )
+            SELECT ri.item_id, COUNT(DISTINCT ri.user_id) as score
             FROM recommendation_interactions ri
+            INNER JOIN user_interactions ui ON ri.user_id = ui.user_id
             WHERE ri.item_id != ALL($1)
-              AND ri.user_id IN (
-                SELECT user_id FROM recommendation_interactions WHERE item_id = ANY($1)
-              )
               AND ri.created_at > (NOW() - INTERVAL '90 days')
             GROUP BY ri.item_id
             ORDER BY score DESC
@@ -109,9 +125,13 @@ impl AffinityService {
     /// Get cached affinity recommendations if present
     pub async fn get_cached_affinity(&self, user_id: Uuid) -> Result<Option<Vec<(Uuid, f32)>>, redis::RedisError> {
         if let Some(rc) = &self.db_client.redis_client {
-            let mut conn = rc.lock().await;
+            let mut conn = ConnectionManager::clone(rc);
             let key = Self::redis_key(user_id);
-            if let Ok(Some(raw)) = conn.get::<_, Option<String>>(key).await {
+            let cached: Result<Option<String>, redis::RedisError> = redis::cmd("GET")
+                .arg(&key)
+                .query_async(&mut conn)
+                .await;
+            if let Ok(Some(raw)) = cached {
                 if let Ok(vec) = serde_json::from_str::<Vec<(Uuid, f32)>>(&raw) {
                     return Ok(Some(vec));
                 }
@@ -123,10 +143,15 @@ impl AffinityService {
     /// Cache affinity recommendations in Redis
     pub async fn cache_affinity(&self, user_id: Uuid, items: &Vec<(Uuid, f32)>) -> Result<(), redis::RedisError> {
         if let Some(rc) = &self.db_client.redis_client {
-            let mut conn = rc.lock().await;
+            let mut conn = ConnectionManager::clone(rc);
             let key = Self::redis_key(user_id);
             let payload = serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string());
-            let _: () = conn.set_ex(key, payload, self.cache_ttl).await?;
+            let _: Result<(), redis::RedisError> = redis::cmd("SETEX")
+                .arg(&key)
+                .arg(self.cache_ttl)
+                .arg(&payload)
+                .query_async(&mut conn)
+                .await;
         }
         Ok(())
     }

@@ -111,6 +111,9 @@ pub struct User {
     // Wallet field
     pub wallet_address: Option<String>,
     
+    // Contact field
+    pub phone_number: Option<String>,
+    
     // Verification fields
     pub nin_number: Option<String>,
     pub verification_document_id: Option<String>,

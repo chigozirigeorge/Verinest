@@ -6,6 +6,7 @@ use crate::db::db::DBClient;
 use crate::services::reco_db::RecoDB;
 use crate::services::affinity::AffinityService;
 use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 
 /// Ranking service: blends affinity scores with popularity to produce a final ranked list.
 ///
@@ -130,10 +131,15 @@ impl RankingService {
     /// Cache ranked results in Redis
     pub async fn cache_ranked(&self, user_id: Uuid, items: &Vec<(Uuid, f32)>) -> Result<(), redis::RedisError> {
         if let Some(rc) = &self.db_client.redis_client {
-            let mut conn = rc.lock().await;
+            let mut conn = ConnectionManager::clone(rc);
             let key = Self::redis_key(user_id);
             let payload = serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string());
-            let _: () = conn.set_ex(key, payload, self.cache_ttl).await?;
+            let _: Result<(), redis::RedisError> = redis::cmd("SETEX")
+                .arg(&key)
+                .arg(self.cache_ttl)
+                .arg(&payload)
+                .query_async(&mut conn)
+                .await;
         }
         Ok(())
     }
@@ -141,9 +147,13 @@ impl RankingService {
     /// Get cached ranked results
     pub async fn get_cached_ranked(&self, user_id: Uuid) -> Result<Option<Vec<(Uuid, f32)>>, redis::RedisError> {
         if let Some(rc) = &self.db_client.redis_client {
-            let mut conn = rc.lock().await;
+            let mut conn = ConnectionManager::clone(rc);
             let key = Self::redis_key(user_id);
-            if let Ok(Some(raw)) = conn.get::<_, Option<String>>(key).await {
+            let cached: Result<Option<String>, redis::RedisError> = redis::cmd("GET")
+                .arg(&key)
+                .query_async(&mut conn)
+                .await;
+            if let Ok(Some(raw)) = cached {
                 if let Ok(vec) = serde_json::from_str::<Vec<(Uuid, f32)>>(&raw) {
                     return Ok(Some(vec));
                 }

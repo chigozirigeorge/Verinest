@@ -12,13 +12,16 @@ use uuid::Uuid;
 use validator::Validate;
 use num_traits::ToPrimitive;
 use sqlx::Postgres;
+use redis::aio::ConnectionManager;
 
 use crate::{
     AppState, db::{
         labourdb::LaborExt::{self},
         naira_walletdb::NairaWalletExt,
         userdb::UserExt, verificationdb::VerificationExt,
-    }, dtos::{labordtos::*, userdtos::FilterUserDto}, error::HttpError, mail::mails, middleware::JWTAuthMiddeware, models::{labourmodel::*, 
+    }, dtos::{labordtos::*, userdtos::FilterUserDto}, 
+    error::HttpError, mail::mails, middleware::JWTAuthMiddeware,
+    models::{labourmodel::*, 
         usermodel::{User, VerificationStatus}, verificationmodels::OtpPurpose}
 };
 
@@ -47,6 +50,7 @@ pub fn labour_handler() -> Router {
         .route("/jobs/:job_id/review", post(create_job_review))
         .route("/worker/portfolio/:item_id", delete(delete_portfolio_item)) // NEW
         .route("/workers/:worker_id/portfolio", get(get_worker_public_portfolio))
+        .route("/workers/:username", get(get_worker_username_portfolio))
         
         // Dispute management routes
         .route("/jobs/:job_id/dispute", post(create_dispute))
@@ -73,6 +77,7 @@ pub fn labour_handler() -> Router {
         
         // Escrow routes
         .route("/jobs/:job_id/escrow", get(get_job_escrow))
+        .route("/jobs/:job_id/escrow/status", get(get_escrow_status))
         .route("/jobs/:job_id/escrow/release", post(release_escrow_payment))
         
 }
@@ -247,6 +252,34 @@ pub async fn get_worker_public_portfolio(
 ) -> Result<impl IntoResponse, HttpError> {
     let portfolio = app_state.db_client
         .get_worker_portfolio(worker_id) // This expects worker_profile.id
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(
+        "Worker portfolio retrieved successfully",
+        portfolio,
+    )))
+}
+
+pub async fn get_worker_username_portfolio(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Path(username): Path<String>,
+) -> Result<impl IntoResponse, HttpError> {
+
+    let user = app_state.db_client
+        .get_user(None, Some(&username), None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("User not found"))?;
+
+    let worker_profile = app_state.db_client
+        .get_worker_profile(user.id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+
+    let portfolio = app_state.db_client
+        .get_worker_portfolio(worker_profile.id) // This expects worker_profile.id
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
@@ -1462,18 +1495,46 @@ pub async fn get_employer_dashboard(
     )))
 }
 
+async fn check_employer_wallet_balance(
+    app_state: &Arc<AppState>,
+    employer_id: Uuid,
+    required_amount: f64,
+) -> Result<(), HttpError> {
+    let wallet = app_state.db_client
+        .get_naira_wallet(employer_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::bad_request("Wallet not found. Please create a wallet first."))?;
+    
+    let required_kobo = crate::utils::currency::naira_to_kobo(required_amount);
+    
+    if wallet.available_balance < required_kobo {
+        return Err(HttpError::bad_request(format!(
+            "Insufficient wallet balance. You have ₦{:.2} but need ₦{:.2}. Please top up your wallet.",
+            crate::utils::currency::kobo_to_naira(wallet.available_balance),
+            required_amount
+        )));
+    }
+    
+    Ok(())
+}
+
 pub async fn sign_contract(
     Extension(app_state): Extension<Arc<AppState>>,
     Path(contract_id): Path<Uuid>,
     Extension(auth): Extension<JWTAuthMiddeware>,
     Json(body): Json<SignContractDto>,
 ) -> Result<impl IntoResponse, HttpError> {
-    // Get contract and verify user is a participant
+    // Start database transaction for atomic contract signing
+    let mut tx = app_state.db_client.pool.begin().await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Get contract and verify user is a participant with row-level lock to prevent race conditions
     let contract_result = sqlx::query_as::<_, JobContract>(
-        "SELECT * FROM job_contracts WHERE id = $1"
+        "SELECT * FROM job_contracts WHERE id = $1 FOR UPDATE"
     )
     .bind(contract_id)
-    .fetch_optional(&app_state.db_client.pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| HttpError::server_error(e.to_string()))?
     .ok_or_else(|| HttpError::not_found("Contract not found"))?;
@@ -1501,10 +1562,10 @@ pub async fn sign_contract(
     // Require prior transaction PIN verification (short-lived Redis flag set by /transaction-pin/verify)
     let redis_verified = if let Some(redis_arc) = &app_state.db_client.redis_client {
         let key = format!("pin:verified:{}", auth.user.id);
-        let mut conn = redis_arc.lock().await;
+        let mut conn = ConnectionManager::clone(redis_arc);
         let res: Option<String> = redis::cmd("GET")
             .arg(&key)
-            .query_async(&mut *conn)
+            .query_async(&mut conn)
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
 
@@ -1517,18 +1578,21 @@ pub async fn sign_contract(
         return Err(HttpError::unauthorized("Transaction PIN not verified. Please verify your PIN before signing the contract."));
     }
 
-    // Sign the contract
+    // Sign the contract within the transaction
     let signed_contract = app_state.db_client
-        .sign_contract(contract_id, signer_role.to_string())
+        .sign_contract_tx(contract_id, signer_role.to_string(), &mut tx)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // Get job details for notification
-    let job = app_state.db_client
-        .get_job_by_id(signed_contract.job_id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?
-        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+    // Get job details for notification (within transaction for consistency)
+    let job = sqlx::query_as::<_, Job>(
+        "SELECT * FROM jobs WHERE id = $1"
+    )
+    .bind(signed_contract.job_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?
+    .ok_or_else(|| HttpError::not_found("Job not found"))?;
 
     // Notify other party if both haven't signed
     let both_signed = signed_contract.signed_by_employer.unwrap_or(false) 
@@ -1557,6 +1621,11 @@ pub async fn sign_contract(
             // If the signer was the employer, create the escrow and attempt to place a wallet hold.
             if signer_role == "employer" {
                 let platform_fee = job.budget.to_f64().unwrap_or(0.0) * 0.03;
+                
+                // Check employer wallet balance before creating escrow
+                let total_required = job.budget.to_f64().unwrap_or(0.0) + platform_fee;
+                check_employer_wallet_balance(&app_state, auth.user.id, total_required).await?;
+                
                 // Create escrow with no worker assigned yet; worker_id will be set when worker signs
                 // Create escrow and place wallet hold atomically
                 match app_state.db_client.create_escrow_with_hold(
@@ -1570,7 +1639,16 @@ pub async fn sign_contract(
                     }
                     Err(e) => {
                         tracing::warn!("Failed to create escrow with hold for job {}: {:?}", job.id, e);
-                        // Fallback: create escrow without hold (best-effort)
+                        
+                        // Check if it's insufficient balance error
+                        if e.to_string().contains("insufficient_available_balance") {
+                            return Err(HttpError::bad_request(format!(
+                                "Insufficient wallet balance. You need ₦{:.2} to fund this escrow. Please top up your wallet and try again.",
+                                job.budget.to_f64().unwrap_or(0.0) + platform_fee
+                            )));
+                        }
+                        
+                        // For other errors, still try fallback but inform user
                         if let Err(e2) = app_state.db_client.create_escrow_transaction(
                             job.id,
                             job.employer_id,
@@ -1579,7 +1657,13 @@ pub async fn sign_contract(
                             platform_fee,
                         ).await {
                             tracing::error!("Failed to create fallback escrow for job {}: {:?}", job.id, e2);
+                            return Err(HttpError::server_error("Failed to create escrow. Please contact support."));
                         }
+                        
+                        tracing::warn!("Created escrow without wallet hold due to: {:?}", e);
+                        return Err(HttpError::bad_request(
+                            "Escrow created but wallet funds could not be secured. Please contact support to ensure proper payment setup."
+                        ));
                     }
                 }
             }
@@ -1605,6 +1689,10 @@ pub async fn sign_contract(
             )
             .await;
     }
+
+    // Commit the transaction to make all changes atomic
+    tx.commit().await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     Ok((
         StatusCode::OK,
@@ -1688,6 +1776,64 @@ pub async fn get_job_escrow(
     )))
 }
 
+pub async fn get_escrow_status(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+    Extension(auth): Extension<JWTAuthMiddeware>,
+) -> Result<impl IntoResponse, HttpError> {
+    let job = app_state.db_client
+        .get_job_by_id(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Job not found"))?;
+
+    // Check authorization - employer or assigned worker can view escrow status
+    if job.employer_id != auth.user.id && job.assigned_worker_id != Some(auth.user.id) {
+        return Err(HttpError::unauthorized("Not authorized to view escrow status for this job"));
+    }
+
+    let escrow = app_state.db_client
+        .get_escrow_by_job_id(job_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(
+        "Escrow status retrieved successfully",
+        serde_json::json!({
+            "job_id": job_id,
+            "job_title": job.title,
+            "employer_id": job.employer_id,
+            "worker_id": job.assigned_worker_id,
+            "escrow": escrow,
+            "total_amount": job.budget,
+            "platform_fee": job.budget.to_f64().unwrap_or(0.0) * 0.03,
+            "amount_released": escrow.as_ref().map(|e| {
+                let total = e.amount.to_f64().unwrap_or(0.0);
+                let platform_fee = e.platform_fee.to_f64().unwrap_or(0.0);
+                let total_with_fee = total + platform_fee;
+                let released_amount = match e.status {
+                    Some(PaymentStatus::Completed) => total_with_fee,
+                    Some(PaymentStatus::PartiallyPaid) => {
+                        // Calculate released amount from remaining
+                        total_with_fee - (e.amount.to_f64().unwrap_or(0.0) + e.platform_fee.to_f64().unwrap_or(0.0))
+                    },
+                    _ => 0.0
+                };
+                released_amount
+            }).unwrap_or(0.0),
+            "amount_remaining": escrow.as_ref().map(|e| {
+                let total = e.amount.to_f64().unwrap_or(0.0);
+                let platform_fee = e.platform_fee.to_f64().unwrap_or(0.0);
+                total + platform_fee
+            }).unwrap_or(job.budget.to_f64().unwrap_or(0.0) + (job.budget.to_f64().unwrap_or(0.0) * 0.03)),
+            "status": escrow.as_ref().map(|e| match &e.status {
+                Some(status) => format!("{:?}", status),
+                None => "unknown".to_string()
+            }).unwrap_or_else(|| "not_created".to_string())
+        })
+    )))
+}
+
 pub async fn release_escrow_payment(
     Extension(app_state): Extension<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -1703,6 +1849,16 @@ pub async fn release_escrow_payment(
 
     if job.employer_id != auth.user.id {
         return Err(HttpError::unauthorized("Not authorized to release payment for this job"));
+    }
+
+    // Validate release percentage
+    if body.release_percentage <= 0.0 || body.release_percentage > 1.0 {
+        return Err(HttpError::bad_request("Release percentage must be between 0.0 and 1.0"));
+    }
+
+    // Check if job supports partial payments
+    if body.release_percentage != 1.0 && !job.partial_payment_allowed.unwrap_or(false) {
+        return Err(HttpError::bad_request("Partial payments are only allowed for jobs that permit partial payments"));
     }
 
     let escrow_release = app_state.escrow_service

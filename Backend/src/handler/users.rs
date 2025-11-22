@@ -1,10 +1,12 @@
 //13
 use std::{env, sync::Arc};
 
-use axum::{extract::{Query, Path}, middleware, response::IntoResponse, routing::{get, post, put}, Extension, Json, Router};
+use axum::{extract::{Query, Path}, 
+middleware, response::IntoResponse, routing::{get, post, put}, Extension, Json, Router};
 use chrono::Utc;
 use validator::Validate;
 use uuid::Uuid;
+use redis::aio::ConnectionManager;
 
 
 
@@ -45,6 +47,7 @@ pub fn users_handler() -> Router {
     .route("/check-username", get(check_username_availability))
      .route("/avatar", put(update_user_avatar))
     .route("/name", put(update_user_name))
+    .route("/profile", put(update_user_profile))
     .route("/role", put(update_user_role))
     .route("/role/upgrade", put(upgrade_user_role)) // Self-upgrade route
     .route("/role/available", get(get_available_roles)) // Get available roles
@@ -148,14 +151,14 @@ pub async fn verify_transaction_pin(
     let expires_at = Utc::now() + chrono::Duration::minutes(5);
     if let Some(redis_arc) = &app_state.db_client.redis_client {
         let key = format!("pin:verified:{}", user.user.id);
-        let mut conn = redis_arc.lock().await;
+        let mut conn = ConnectionManager::clone(redis_arc);
         // SET key with EXPIRE 300 seconds
         let _ : () = redis::cmd("SET")
             .arg(&key)
             .arg("1")
             .arg("EX")
             .arg(300)
-            .query_async(&mut *conn)
+            .query_async(&mut conn)
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
     }
@@ -673,16 +676,18 @@ pub async fn upgrade_user_role(
         }
     }
 
-    // Increment role change count
-    let _ = app_state.db_client
-        .increment_role_change_count(user_id)
+    // Start database transaction for atomic role change
+    let mut tx = app_state.db_client.pool.begin().await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Update the user role and increment count atomically
+    let updated_user = app_state.db_client
+        .update_user_role_atomic(user_id, body.new_role, &mut tx)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // Update the user role
-    let updated_user = app_state.db_client
-        .update_user_role(user_id, body.new_role)
-        .await
+    // Commit the transaction
+    tx.commit().await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     let filtered_user = FilterUserDto::filter_user(&updated_user);
@@ -1109,4 +1114,36 @@ pub async fn check_username_availability(
         available: true,
         message: "Username is available".to_string(),
     }))
+}
+
+pub async fn update_user_profile(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth): Extension<JWTAuthMiddeware>,
+    Json(payload): Json<UpdateUserProfileDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    // Validate the payload
+    if let Err(validation_errors) = payload.validate() {
+        return Err(HttpError::bad_request(format!("Validation error: {:?}", validation_errors)));
+    }
+
+    // Additional phone number validation
+    if let Err(phone_error) = payload.validate_phone_number() {
+        return Err(HttpError::bad_request(format!("Phone number validation error: {}", phone_error)));
+    }
+
+    // Update user profile
+    let updated_user = app_state.db_client
+        .update_user_profile(
+            auth.user.id,
+            payload.phone_number.as_deref(),
+            payload.lga.as_deref(),
+            payload.nearest_landmark.as_deref(),
+        )
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "message": "Profile updated successfully",
+        "user": updated_user
+    })))
 }

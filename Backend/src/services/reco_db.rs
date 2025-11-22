@@ -3,8 +3,7 @@ use uuid::Uuid;
 use sqlx::Error as SqlxError;
 use crate::recommendation_models::{Interaction, Job, WorkerProfile, FeedItem};
 use crate::db::db::DBClient;
-use redis::AsyncCommands;
-use serde_json::json;
+use redis::aio::ConnectionManager;
 
 /// Recommendation DB helper — thin wrapper around PostgreSQL + Redis used by the reco services
 #[derive(Clone)]
@@ -96,9 +95,14 @@ impl RecoDB {
     pub async fn cache_feed(&self, user_id: Uuid, role: &str, items: &[FeedItem], ttl_seconds: usize) -> Result<(), redis::RedisError> {
         if let Some(redis_client) = &self.db_client.redis_client {
             let key = format!("reco:feed:{}:{}", user_id, role);
-            let mut conn = redis_client.lock().await;
+            let mut conn = ConnectionManager::clone(redis_client);
             let json_items = serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string());
-            let _: () = conn.set_ex(key, json_items, ttl_seconds).await?;
+            let _: Result<(), redis::RedisError> = redis::cmd("SETEX")
+                .arg(&key)
+                .arg(ttl_seconds)
+                .arg(&json_items)
+                .query_async(&mut conn)
+                .await;
             Ok(())
         } else {
             // Redis not available — treat as a no-op
@@ -110,11 +114,14 @@ impl RecoDB {
     pub async fn get_cached_feed(&self, user_id: Uuid, role: &str) -> Result<Option<Vec<FeedItem>>, redis::RedisError> {
         if let Some(redis_client) = &self.db_client.redis_client {
             let key = format!("reco:feed:{}:{}", user_id, role);
-            let mut conn = redis_client.lock().await;
-            let raw: Option<String> = conn.get(key).await?;
-            if let Some(data) = raw {
-                if let Ok(items) = serde_json::from_str::<Vec<FeedItem>>(&data) {
-                    return Ok(Some(items));
+            let mut conn = ConnectionManager::clone(redis_client);
+            let raw: Result<Option<String>, redis::RedisError> = redis::cmd("GET")
+                .arg(&key)
+                .query_async(&mut conn)
+                .await;
+            if let Ok(Some(json_str)) = raw {
+                if let Ok(parsed) = serde_json::from_str::<Vec<FeedItem>>(&json_str) {
+                    return Ok(Some(parsed));
                 }
             }
             Ok(None)
@@ -127,24 +134,28 @@ impl RecoDB {
     // Stream: reco:events
     pub async fn push_event_stream(&self, interaction: &Interaction) -> Result<(), redis::RedisError> {
         if let Some(redis_client) = &self.db_client.redis_client {
-            let mut conn = redis_client.lock().await;
+            let mut conn = ConnectionManager::clone(redis_client);
             let key = "reco:events";
             // Serialize the Interaction via serde so enum casing and shapes match the
             // worker's deserializer (lowercase enums, RFC3339 timestamps, etc.)
             let payload_str = serde_json::to_string(&interaction).map_err(|e| redis::RedisError::from((redis::ErrorKind::TypeError, "serialization error")))?;
 
             // Push into Redis Stream for stream-based consumers
-            let _: String = redis::cmd("XADD")
+            let _: Result<String, redis::RedisError> = redis::cmd("XADD")
                 .arg(key)
                 .arg("*")
                 .arg("data")
                 .arg(payload_str.clone())
-                .query_async(&mut *conn)
-                .await?;
+                .query_async(&mut conn)
+                .await;
 
             // Also push into a simple list for the BRPOP-based worker (backwards compatible)
             let list_key = "reco:events_list";
-            let _: () = conn.rpush(list_key, payload_str).await?;
+            let _: Result<(), redis::RedisError> = redis::cmd("RPUSH")
+                .arg(list_key)
+                .arg(&payload_str)
+                .query_async(&mut conn)
+                .await;
             Ok(())
         } else {
             Ok(())

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use crate::db::db::DBClient;
 use crate::services::reco_db::RecoDB;
 use crate::recommendation_models::Interaction;
-use redis::AsyncCommands;
+use redis::{AsyncCommands, aio::ConnectionManager};
 use serde_json::from_str;
 use tokio::time::{sleep, Duration};
 
@@ -51,9 +51,9 @@ impl BehaviorTracker {
 
             // Try to pop an event from the list with a small timeout
             if let Some(rc) = &self.db_client.redis_client {
-                let mut conn = rc.lock().await;
+                let mut conn = ConnectionManager::clone(rc);
                 // Use explicit BRPOP command and map to Option<(String, String)> so nil (timeout) is handled
-                match redis::cmd("BRPOP").arg(&self.queue_key).arg(5).query_async::<_, Option<(String, String)>>(&mut *conn).await {
+                match redis::cmd("BRPOP").arg(&self.queue_key).arg(5).query_async::<_, Option<(String, String)>>(&mut conn).await {
                     Ok(Some((_key, payload))) => {
                         match from_str::<Interaction>(&payload) {
                             Ok(interaction) => {

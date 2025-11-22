@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use redis::aio::ConnectionManager;
 use uuid::Uuid;
 use chrono;
 use sqlx::types::BigDecimal;
@@ -286,14 +287,14 @@ impl VendorOrderService {
             let lock_key = format!("escrow_lock:order:{}", dto.order_id);
             let lock_value = uuid::Uuid::new_v4().to_string();
             
-            let mut conn = redis_client.lock().await;
+            let mut conn = ConnectionManager::clone(redis_client);
             let acquired_lock: bool = redis::cmd("SET")
                 .arg(&lock_key)
                 .arg(&lock_value)
                 .arg("NX")      // Only set if not exists
                 .arg("EX")      // Set expiration in seconds
                 .arg(30)        // 30-second timeout
-                .query_async(&mut *conn)
+                .query_async(&mut conn)
                 .await
                 .unwrap_or(false);
             
@@ -778,14 +779,14 @@ impl VendorOrderService {
 /// ✅ FIX #8: Guard to automatically release distributed locks
 /// Releases Redis lock when dropped, preventing deadlocks
 struct EscrowLockGuard {
-    redis_client: Arc<tokio::sync::Mutex<redis::aio::MultiplexedConnection>>,
+    redis_client: Arc<ConnectionManager>,
     lock_key: String,
     lock_value: String,
 }
 
 impl EscrowLockGuard {
     fn new(
-        redis_client: Arc<tokio::sync::Mutex<redis::aio::MultiplexedConnection>>,
+        redis_client: Arc<ConnectionManager>,
         lock_key: String,
         lock_value: String,
     ) -> Self {
@@ -817,11 +818,11 @@ impl Drop for EscrowLockGuard {
                 "#
             );
             
-            let mut conn = redis.lock().await;
+            let mut conn = (*redis).clone();
             let _ = script
                 .key(&key)
                 .arg(&value)
-                .invoke_async::<_, i32>(&mut *conn)
+                .invoke_async::<_, i32>(&mut conn)
                 .await;
         });
     }

@@ -1,17 +1,25 @@
 // db/db.rs
 use sqlx::{Pool, Postgres};
-use redis::aio::MultiplexedConnection;
+use redis::aio::{ConnectionManager};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DBClient {
     pub pool: Pool<Postgres>,
-    pub redis_client: Option<Arc<Mutex<MultiplexedConnection>>>,
+    pub redis_client: Option<Arc<ConnectionManager>>,
+}
+
+impl std::fmt::Debug for DBClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DBClient")
+            .field("pool", &"Pool<Postgres>")
+            .field("redis_client", &self.redis_client.is_some())
+            .finish()
+    }
 }
 
 impl DBClient {
-    /// Create a new DBClient with PostgreSQL pool only (backward compatible)
+    /// Create a new DBClient with PostgreSQL pool only 
     pub fn new(pool: Pool<Postgres>) -> Self {
         DBClient { 
             pool,
@@ -23,12 +31,12 @@ impl DBClient {
     pub async fn with_redis(pool: Pool<Postgres>, redis_url: &str) -> Result<Self, String> {
         match redis::Client::open(redis_url) {
             Ok(client) => {
-                match client.get_multiplexed_tokio_connection().await {
+                match ConnectionManager::new(client).await {
                     Ok(conn) => {
                         tracing::info!("✅ Redis connection established successfully");
                         Ok(DBClient {
                             pool,
-                            redis_client: Some(Arc::new(Mutex::new(conn))),
+                            redis_client: Some(Arc::new(conn)),
                         })
                     }
                     Err(e) => {

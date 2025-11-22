@@ -1,7 +1,6 @@
 // models/verificationmodels.rs
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::Type;
 use uuid::Uuid;
 use validator::Validate;
 

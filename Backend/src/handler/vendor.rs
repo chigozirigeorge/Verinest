@@ -57,12 +57,16 @@ pub fn vendor_handler() -> Router {
         .route("/orders/:order_id/complete", post(complete_order))
         .route("/orders/:order_id/cancel", post(cancel_order))
         
+        // Admin Payment Verification
+        .route("/admin/payments/verify", post(verify_service_purchase))
+        
         // Buyer Orders
         .route("/orders/my-purchases", get(get_my_purchases))
         
         // Vendor Orders
         .route("/vendor/orders", get(get_vendor_orders_handler))
         .route("/vendor/orders/:order_id/confirm", post(vendor_confirm_order))
+        .route("/orders/:order_id/delivery/confirm", post(confirm_delivery))
         
         // Reviews
         .route("/orders/:order_id/review", post(create_order_review))
@@ -1026,43 +1030,61 @@ pub async fn initiate_purchase(
     }
 }
 
-// Verify payment and update order (webhook or manual verification)
+// Verify payment and update order (webhook endpoint)
 pub async fn verify_service_purchase(
-    app_state: Arc<AppState>,
-    payment_reference: String,
-) -> Result<ServiceOrder, Box<dyn std::error::Error>> {
+    Extension(app_state): Extension<Arc<AppState>>,
+    Extension(auth): Extension<JWTAuthMiddeware>,
+    Json(body): Json<VerifyPaymentDto>,
+) -> Result<impl IntoResponse, HttpError> {
+    body.validate()
+        .map_err(|e| HttpError::bad_request(e.to_string()))?;
+    
+    // Only admins can verify payments (for manual verification)
+    if auth.user.role != UserRole::Admin && auth.user.role != UserRole::SuperAdmin {
+        return Err(HttpError::unauthorized("Not authorized to verify payments"));
+    }
+    
     // Get order
     let order = app_state.db_client
-        .get_order_by_reference(&payment_reference)
-        .await?
-        .ok_or("Order not found")?;
+        .get_order_by_reference(&body.payment_reference)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Order not found"))?;
     
     if order.status == Some(OrderStatus::Paid) {
-        return Ok(order);
+        return Ok(Json(serde_json::json!({
+            "status": "success",
+            "message": "Order already paid",
+            "data": order
+        })));
     }
     
     // Verify with payment provider
     let payment_service = crate::service::payment_provider::PaymentProviderService::new(&app_state.env);
     let verification = payment_service
-        .verify_payment(&payment_reference)
-        .await?;
+        .verify_payment(&body.payment_reference)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
     
     if verification.status == "success" {
         // Update order to paid
         let paid_order = app_state.db_client
             .update_order_status(order.id, "paid".to_string())
-            .await?;
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
         
         // Get service and vendor
         let service = app_state.db_client
             .get_service(order.service_id)
-            .await?
-            .ok_or("Service not found")?;
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?
+            .ok_or_else(|| HttpError::not_found("Service not found"))?;
         
         let vendor = app_state.db_client
             .get_vendor_profile_by_id(order.vendor_id)
-            .await?
-            .ok_or("Vendor not found")?;
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?
+            .ok_or_else(|| HttpError::not_found("Vendor not found"))?;
         
         // Notify vendor
         let _ = app_state.notification_service
@@ -1084,9 +1106,17 @@ pub async fn verify_service_purchase(
             )
             .await;
         
-        Ok(paid_order)
+        Ok(Json(serde_json::json!({
+            "status": "success",
+            "message": "Payment verified and order updated",
+            "data": paid_order
+        })))
     } else {
-        Err("Payment verification failed".into())
+        Ok(Json(serde_json::json!({
+            "status": "error",
+            "message": "Payment verification failed",
+            "details": verification
+        })))
     }
 }
 
@@ -1143,11 +1173,19 @@ pub async fn vendor_confirm_order(
     Extension(auth): Extension<JWTAuthMiddeware>,
     Path(order_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, HttpError> {
-    let order = app_state.db_client
-        .get_order_by_id(order_id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?
-        .ok_or_else(|| HttpError::not_found("Order not found"))?;
+    // Start database transaction for atomic order confirmation
+    let mut tx = app_state.db_client.pool.begin().await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Get order with row-level lock to prevent race conditions
+    let order = sqlx::query_as::<_, ServiceOrder>(
+        "SELECT * FROM service_orders WHERE id = $1 FOR UPDATE"
+    )
+    .bind(order_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?
+    .ok_or_else(|| HttpError::not_found("Order not found"))?;
     
     let vendor = app_state.db_client
         .get_vendor_profile_by_user(order.vendor_id)
@@ -1163,16 +1201,27 @@ pub async fn vendor_confirm_order(
         return Err(HttpError::bad_request("Order must be paid before confirmation"));
     }
     
-    let confirmed_order = app_state.db_client
-        .update_order_status(order_id, "confirmed".to_string())
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+    // Update order status within transaction
+    let confirmed_order = sqlx::query_as::<_, ServiceOrder>(
+        "UPDATE service_orders SET status = 'confirmed', updated_at = NOW() WHERE id = $1 RETURNING *"
+    )
+    .bind(order_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
     
-    // Notify buyer
-    let service = app_state.db_client.get_service(order.service_id).await?.unwrap();
+    // Notify buyer (outside of transaction for performance)
+    let service = app_state.db_client.get_service(order.service_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Service not found"))?;
     let _ = app_state.notification_service
         .notify_order_confirmed(order.buyer_id, &service.title, &order.order_number)
         .await;
+    
+    // Commit the transaction
+    tx.commit().await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
     
     Ok(Json(serde_json::json!({
         "status": "success",
@@ -1227,7 +1276,10 @@ pub async fn complete_order(
         .await?;
     
     // Notify vendor of payment
-    let service = app_state.db_client.get_service(order.service_id).await?.unwrap();
+    let service = app_state.db_client.get_service(order.service_id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Service not found"))?;
     let _ = app_state.notification_service
         .notify_order_completed(vendor.user_id, &service.title, order.vendor_amount.to_f64().unwrap_or(0.0))
         .await;
@@ -1547,6 +1599,12 @@ pub struct CreateServiceDisputeDto {
     pub description: String,
     
     pub evidence_urls: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Validate)]
+pub struct VerifyPaymentDto {
+    #[validate(length(min = 1, message = "Payment reference is required"))]
+    pub payment_reference: String,
 }
 
 pub async fn calculate_delivery_fee(

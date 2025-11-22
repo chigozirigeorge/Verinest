@@ -4,6 +4,7 @@ use sqlx::Error as SqlxError;
 use crate::db::db::DBClient;
 use redis::AsyncCommands;
 use chrono::{Utc, Duration};
+use redis::aio::ConnectionManager;
 
 /// Simple segmentation service used by the recommendation engine.
 ///
@@ -107,10 +108,15 @@ impl SegmentationService {
     /// Cache a segment in Redis (no-op if Redis not configured)
     pub async fn cache_segment(&self, user_id: Uuid, segment: &Segment) -> Result<(), redis::RedisError> {
         if let Some(rc) = &self.db_client.redis_client {
-            let mut conn = rc.lock().await;
+            let mut conn = ConnectionManager::clone(rc);
             let key = Self::redis_key_for(user_id);
             let payload = serde_json::to_string(segment).unwrap_or_else(|_| "\"Dormant\"".to_string());
-            let _: () = conn.set_ex(key, payload, self.cache_ttl).await?;
+            let _: Result<(), redis::RedisError> = redis::cmd("SETEX")
+                .arg(&key)
+                .arg(self.cache_ttl)
+                .arg(&payload)
+                .query_async(&mut conn)
+                .await;
         }
         Ok(())
     }
@@ -118,10 +124,13 @@ impl SegmentationService {
     /// Get cached segment if present
     pub async fn get_cached_segment(&self, user_id: Uuid) -> Result<Option<Segment>, redis::RedisError> {
         if let Some(rc) = &self.db_client.redis_client {
-            let mut conn = rc.lock().await;
+            let mut conn = ConnectionManager::clone(rc);
             let key = Self::redis_key_for(user_id);
-            let raw: Option<String> = conn.get(key).await?;
-            if let Some(s) = raw {
+            let raw: Result<Option<String>, redis::RedisError> = redis::cmd("GET")
+                .arg(&key)
+                .query_async(&mut conn)
+                .await;
+            if let Ok(Some(s)) = raw {
                 if let Ok(seg) = serde_json::from_str::<Segment>(&s) {
                     return Ok(Some(seg));
                 }
