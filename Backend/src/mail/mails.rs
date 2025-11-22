@@ -105,7 +105,7 @@ pub async fn send_verification_status_email(
         VerificationStatus::Expired => "Expired",
     };
 
-    let app_url = std::env::var("APP_URL").unwrap_or_else(|_| "https://verinestorg.vercel.app/".to_string());
+    let app_url = std::env::var("APP_URL").unwrap_or_else(|_| "https://verinest.xyz/".to_string());
     let dashboard_url = format!("{}/dashboard", app_url);
     let verification_url = format!("{}/verification", app_url);
 
@@ -257,7 +257,7 @@ pub async fn send_progress_update_email(
     let template_path = "src/mail/templates/Progress-Update.html";
     
     let app_url = std::env::var("APP_URL")
-        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+        .unwrap_or_else(|_| "https://verinest.xyz".to_string());
     let dashboard_url = format!("{}/dashboard", app_url);
     
     let update_date = chrono::Utc::now().format("%B %d, %Y at %I:%M %p").to_string();
@@ -290,7 +290,7 @@ pub async fn send_dispute_notification_email(
     let template_path = "src/mail/templates/Dispute-Notification.html";
     
     let app_url = std::env::var("APP_URL")
-        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+        .unwrap_or_else(|_| "https://verinest.xyz".to_string());
     let disputes_url = format!("{}/disputes", app_url);
     
     let message = if is_raised_by {
@@ -322,7 +322,7 @@ pub async fn send_contract_proposal_email(
     let template_path = "src/mail/templates/Contract-Proposal.html";
     
     let app_url = std::env::var("APP_URL")
-        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+        .unwrap_or_else(|_| "https://verinest.xyz".to_string());
     let chat_url = format!("{}/chat", app_url);
     
     let placeholders = vec![
@@ -347,7 +347,7 @@ pub async fn send_new_message_notification_email(
     let template_path = "src/mail/templates/New-Message.html";
     
     let app_url = std::env::var("APP_URL")
-        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+        .unwrap_or_else(|_| "https://verinest.xyz".to_string());
     let chat_url = format!("{}/chat", app_url);
     
     let placeholders = vec![
@@ -372,7 +372,7 @@ pub async fn send_contract_signature_otp_email(
     let template_path = "src/mail/templates/Contract-Signature-OTP.html";
     
     let app_url = std::env::var("APP_URL")
-        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+        .unwrap_or_else(|_| "https://verinest.xyz".to_string());
     
     let placeholders = vec![
         ("{{username}}".to_string(), username.to_string()),
@@ -395,7 +395,7 @@ pub async fn send_service_inquiry_email(
     let template_path = "src/mail/templates/Service-Inquiry.html";
     
     let app_url = std::env::var("APP_URL")
-        .unwrap_or_else(|_| "https://verinestorg.vercel.app".to_string());
+        .unwrap_or_else(|_| "https://verinest.xyz".to_string());
     let inquiries_url = format!("{}/vendor/inquiries", app_url);
     
     let placeholders = vec![

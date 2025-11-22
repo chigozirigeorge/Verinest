@@ -379,12 +379,12 @@ pub async fn test_url_generation() -> Result<impl IntoResponse, HttpError> {
     println!("   Simple format works: {}", test_url);
 
     println!("🧪 Testing urlencoding...");
-    let encoded = urlencoding::encode("https://verinestorg.vercel.app/callback");
+    let encoded = urlencoding::encode("https://verinest.xyz/callback");
     println!("   URL encoding works: {}", encoded);
 
     println!("🧪 Testing get_authorization_url method...");
     let auth_url = google_oauth.get_authorization_url(
-        "https://verinest.vercel.app/callback",
+        "https://verinest.xyz/callback",
         "test_state"
     );
 
