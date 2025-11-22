@@ -13,7 +13,7 @@ use validator::Validate;
 use crate::{
     db::supportdb::SupportExt,
     error::HttpError,
-    middleware::JWTAuthMiddeware,
+    middleware::main_middleware::JWTAuthMiddeware,
     models::{
         usermodel::UserRole,
         supportmodel::*

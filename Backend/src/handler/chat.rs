@@ -16,7 +16,7 @@ use crate::{
         userdb::UserExt,
     },
     error::HttpError,
-    middleware::JWTAuthMiddeware,
+    middleware::main_middleware::JWTAuthMiddeware,
     models::chatnodels::*,
     AppState,
 };

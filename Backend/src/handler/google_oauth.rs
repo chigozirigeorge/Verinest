@@ -207,7 +207,7 @@ use axum_extra::extract::cookie::{Cookie, CookieJar};
 use crate::{
     db::userdb::UserExt, 
     error::HttpError, 
-    middleware::JWTAuthMiddeware, 
+    middleware::main_middleware::JWTAuthMiddeware, 
     service::google_oauth::GoogleAuthService, 
     utils::token, AppState
 };

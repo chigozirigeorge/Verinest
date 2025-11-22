@@ -21,7 +21,7 @@ use crate::{
         //     get_wallet_verification_status, update_wallet, 
         //     verify_wallet
         // }
-        }, middleware::{role_check, JWTAuthMiddeware}, 
+        }, middleware::main_middleware::{role_check, JWTAuthMiddeware}, 
         models::{usermodel::*, subscriptionmodels::SubscriptionTier}, 
         service::{referral::generate_referral_link, subscription_service::SubscriptionService}, 
         utils::password, AppState};

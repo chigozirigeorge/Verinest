@@ -17,7 +17,7 @@ use num_traits::ToPrimitive;
 use crate::{
     AppState, db::{naira_walletdb::NairaWalletExt, userdb::UserExt, vendordb::VendorExt}, 
     dtos::vendordtos::ConfirmDeliveryDto, error::HttpError, 
-    middleware::JWTAuthMiddeware, 
+    middleware::main_middleware::JWTAuthMiddeware, 
     models::{usermodel::UserRole, walletmodels::*, vendormodels::*}, service::vendor_order_service::VendorOrderService
 };
 use crate::recommendation_models::{Interaction, FeedItemType, InteractionType};

@@ -1,13 +1,12 @@
 // handlers/labour.rs (Complete)
 use std::sync::Arc;
 use axum::{
-    extract::{Path, Query, State}, http::StatusCode, response::IntoResponse, routing::{delete, get, post, put}, Extension, Json, Router
+    extract::{Path, Query}, http::StatusCode, response::IntoResponse, routing::{delete, get, post, put}, Extension, Json, Router
 };
 use crate::recommendation_models::{Interaction, FeedItemType, InteractionType};
 use crate::services::reco_db::RecoDB;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
-use rand::Rng;
 use uuid::Uuid;
 use validator::Validate;
 use num_traits::ToPrimitive;
@@ -18,9 +17,9 @@ use crate::{
     AppState, db::{
         labourdb::LaborExt::{self},
         naira_walletdb::NairaWalletExt,
-        userdb::UserExt, verificationdb::VerificationExt,
+        userdb::UserExt,
     }, dtos::{labordtos::*, userdtos::FilterUserDto}, 
-    error::HttpError, mail::mails, middleware::JWTAuthMiddeware,
+    error::HttpError, middleware::main_middleware::JWTAuthMiddeware,
     models::{labourmodel::*, 
         usermodel::{User, VerificationStatus}, verificationmodels::OtpPurpose}
 };

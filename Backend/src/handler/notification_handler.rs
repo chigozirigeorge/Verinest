@@ -193,7 +193,7 @@ use chrono::{DateTime, Utc};
 use crate::{
     db::db::DBClient,
     error::HttpError,
-    middleware::JWTAuthMiddeware,
+    middleware::main_middleware::JWTAuthMiddeware,
     AppState,
 };
 

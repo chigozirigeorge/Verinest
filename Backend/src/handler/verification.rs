@@ -16,7 +16,7 @@ use crate::{
     dtos::verificationdtos::*,
     error::HttpError,
     mail::mails::send_otp_email,
-    middleware::JWTAuthMiddeware,
+    middleware::main_middleware::JWTAuthMiddeware,
     models::usermodel::{VerificationStatus, VerificationType, UserRole},
     utils::{otp_generator},
     AppState,

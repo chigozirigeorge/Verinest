@@ -25,8 +25,11 @@ use crate::{
     },
     dtos::naira_walletdtos::*,
     error::HttpError,
-    middleware::JWTAuthMiddeware,
-    models::{walletmodels::*, verificationmodels::OtpPurpose},
+    middleware::{
+        main_middleware::{JWTAuthMiddeware},
+        rate_limit::{rate_limit_middleware, wallet_rate_limiter, deposit_rate_limiter, webhook_rate_limiter}
+    },
+    models::{walletmodels::*, verificationmodels::OtpPurpose, usermodel::User},
     service::payment_provider::PaymentProviderService,
     mail::mails,
     AppState,
@@ -36,34 +39,86 @@ use crate::{
 pub fn naira_wallet_handler() -> Router {
     Router::new()
         // Wallet management - remove /wallet prefix since router will be mounted at /wallet
-        .route("/", get(get_wallet))  // ✅ Becomes /api/wallet/wallet when mounted
-        .route("/create", post(create_wallet))  // ✅ Becomes /api/wallet/create
-        .route("/summary", get(get_wallet_summary))
+        .route("/", get(get_wallet).layer(axum::middleware::from_fn_with_state(
+            Arc::new(wallet_rate_limiter()),
+            rate_limit_middleware
+        )))  
+        .route("/create", post(create_wallet).layer(axum::middleware::from_fn_with_state(
+            Arc::new(wallet_rate_limiter()),
+            rate_limit_middleware
+        )))
+        .route("/summary", get(get_wallet_summary).layer(axum::middleware::from_fn_with_state(
+            Arc::new(wallet_rate_limiter()),
+            rate_limit_middleware
+        )))
         
-        // Transactions
-        .route("/deposit", post(initiate_deposit))
+        // Transactions - more restrictive rate limiting
+        .route("/deposit", post(initiate_deposit).layer(axum::middleware::from_fn_with_state(
+            Arc::new(deposit_rate_limiter()),
+            rate_limit_middleware
+        )))
         .route("/deposit/verify", 
-            get(handle_paystack_redirect)
-            .post(verify_deposit))
-        .route("/withdraw", post(withdraw_funds))
-        .route("/transfer", post(transfer_funds))
+            get(handle_paystack_redirect).layer(axum::middleware::from_fn_with_state(
+                Arc::new(deposit_rate_limiter()),
+                rate_limit_middleware
+            ))
+            .post(verify_deposit).layer(axum::middleware::from_fn_with_state(
+                Arc::new(deposit_rate_limiter()),
+                rate_limit_middleware
+            ))
+        )
+        .route("/withdraw", post(withdraw_funds).layer(axum::middleware::from_fn_with_state(
+            Arc::new(deposit_rate_limiter()),
+            rate_limit_middleware
+        )))
+        .route("/transfer", post(transfer_funds).layer(axum::middleware::from_fn_with_state(
+            Arc::new(deposit_rate_limiter()),
+            rate_limit_middleware
+        )))
         
         // Transaction history
-        .route("/transactions", get(get_transaction_history))
-        .route("/transaction/:reference", get(get_transaction_by_ref))
+        .route("/transactions", get(get_transaction_history).layer(axum::middleware::from_fn_with_state(
+            Arc::new(wallet_rate_limiter()),
+            rate_limit_middleware
+        )))
+        .route("/transaction/:reference", get(get_transaction_by_ref).layer(axum::middleware::from_fn_with_state(
+            Arc::new(wallet_rate_limiter()),
+            rate_limit_middleware
+        )))
         
         // Bank accounts
         .route("/bank-accounts", 
-        get(get_bank_accounts)
-        .post(add_bank_account)
+        get(get_bank_accounts).layer(axum::middleware::from_fn_with_state(
+            Arc::new(wallet_rate_limiter()),
+            rate_limit_middleware
+        ))
+        .post(add_bank_account).layer(axum::middleware::from_fn_with_state(
+            Arc::new(wallet_rate_limiter()),
+            rate_limit_middleware
+        ))
         )
-        .route("/bank-accounts/:account_id/verify", post(verify_bank_account))
-        .route("/bank-accounts/:account_id/primary", put(set_primary_account))
-        .route("/bank-accounts/resolve", post(resolve_account_number))
+        .route("/bank-accounts/:account_id/verify", post(verify_bank_account).layer(axum::middleware::from_fn_with_state(
+            Arc::new(wallet_rate_limiter()),
+            rate_limit_middleware
+        )))
+        .route("/bank-accounts/:account_id/primary", put(set_primary_account).layer(axum::middleware::from_fn_with_state(
+            Arc::new(wallet_rate_limiter()),
+            rate_limit_middleware
+        )))
+        .route("/bank-accounts/resolve", post(resolve_account_number).layer(axum::middleware::from_fn_with_state(
+            Arc::new(wallet_rate_limiter()),
+            rate_limit_middleware
+        )))
         
-        // Webhooks
-        .route("/webhook/paystack", post(paystack_webhook))
-        .route("/webhook/flutterwave", post(flutterwave_webhook))
+        // Webhooks - higher rate limit but still protected
+        .route("/webhook/paystack", post(paystack_webhook).layer(axum::middleware::from_fn_with_state(
+            Arc::new(webhook_rate_limiter()),
+            rate_limit_middleware
+        )))
+        .route("/webhook/flutterwave", post(flutterwave_webhook).layer(axum::middleware::from_fn_with_state(
+            Arc::new(webhook_rate_limiter()),
+            rate_limit_middleware
+        )))
 }
 
 // Wallet Management Handlers
@@ -235,8 +290,8 @@ pub async fn handle_paystack_redirect(
             // Transaction already processed, just redirect to success page
             tracing::info!("Transaction {} already completed, redirecting to success page", reference);
         } else if transaction.status == Some(TransactionStatus::Pending) {
-            // Process payment if still pending
-            let _ = app_state
+            // Update the existing transaction to completed instead of creating new one
+            let _updated_transaction = app_state
                 .db_client
                 .update_transaction_status(
                     transaction.id,
@@ -246,21 +301,30 @@ pub async fn handle_paystack_redirect(
                 .await
                 .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-            // Credit the wallet with a new reference to avoid duplicate transaction
-            let credit_reference = format!("CR-{}", reference);
-            let _ = app_state
+            // Credit wallet using the original transaction record (no new transaction created)
+            let wallet = app_state
                 .db_client
-                .credit_wallet(
-                    transaction.user_id,
-                    verification.amount,
-                    TransactionType::Deposit,
-                    "Deposit via Paystack redirect".to_string(),
-                    credit_reference,
-                    Some(verification.gateway_reference),
-                    verification.metadata,
-                )
+                .get_naira_wallet(transaction.user_id)
                 .await
-                .map_err(|e| HttpError::server_error(e.to_string()))?;
+                .map_err(|e| HttpError::server_error(e.to_string()))?
+                .ok_or_else(|| HttpError::not_found("Wallet not found"))?;
+
+            // Update wallet balance directly without creating duplicate transaction
+            let new_balance = wallet.balance + verification.amount;
+            let new_available_balance = wallet.available_balance + verification.amount;
+            
+            sqlx::query(
+                "UPDATE naira_wallets SET balance = $1, available_balance = $2, total_deposits = total_deposits + $3, updated_at = NOW() WHERE id = $4"
+            )
+            .bind(new_balance)
+            .bind(new_available_balance)
+            .bind(verification.amount)
+            .bind(wallet.id)
+            .execute(&app_state.db_client.pool)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+            tracing::info!("Credited wallet {} with amount {} for reference {}", transaction.user_id, verification.amount, reference);
         }
 
             let app_url = &app_state.env.app_url;
@@ -519,7 +583,7 @@ pub async fn transfer_funds(
     let reference = generate_transaction_reference();
 
     // Execute transfer
-    let (sender_tx, recipient_tx) = app_state
+    let (sender_tx, _recipient_tx) = app_state
         .db_client
         .transfer_funds(
             auth.user.id,
@@ -884,8 +948,17 @@ pub async fn flutterwave_webhook(
 
     let webhook_secret: &String = &app_state.env.flutterwave_secret_key;
 
-    // Verify signature
-    if signature != webhook_secret {
+    // Verify signature using HMAC instead of simple string comparison
+    let payload_string = body.to_string();
+    let mut mac = Hmac::<Sha512>::new_from_slice(webhook_secret.as_bytes())
+        .expect("HMAC can take key of any size");
+    mac.update(payload_string.as_bytes());
+    let expected_signature = hex::encode(mac.finalize().into_bytes());
+    
+    if !bool::from(ConstantTimeEq::ct_eq(
+        signature.as_bytes(),
+        expected_signature.as_bytes(),
+    )) {
         tracing::warn!("Invalid Flutterwave webhook signature received");
         return Err(HttpError::new(
             "Invalid webhook signature".to_string(),
@@ -963,54 +1036,103 @@ async fn process_paystack_successful_payment(
     // Convert amount from kobo to your base unit (assuming amount is in kobo from Paystack)
     let amount_kobo = amount as i64;
 
-    // Find transaction by reference
-    let transaction = app_state.db_client
-        .get_transaction_by_reference(reference)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?
-        .ok_or_else(|| {
-            tracing::warn!("Transaction not found for reference: {}", reference);
-            HttpError::not_found("Transaction not found")
-        })?;
+    // SECURITY: Validate reference format to prevent random guessing
+    if !reference.starts_with("VRN_") || reference.len() < 10 {
+        return Err(HttpError::bad_request("Invalid reference format"));
+    }
 
-    // Only process if transaction is still pending
+    // Use database transaction to prevent race conditions
+    let mut tx = app_state.db_client.pool.begin().await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Find transaction by reference with FOR UPDATE lock
+    let transaction = sqlx::query_as::<_, WalletTransaction>(
+        "SELECT * FROM wallet_transactions WHERE reference = $1 FOR UPDATE"
+    )
+    .bind(reference)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?
+    .ok_or_else(|| {
+        tracing::warn!("Transaction not found for reference: {}", reference);
+        HttpError::not_found("Transaction not found")
+    })?;
+
+    // SECURITY: Verify transaction belongs to a valid user (authorization check)
+    let _user = sqlx::query_as::<_, User>(
+        "SELECT * FROM users WHERE id = $1"
+    )
+    .bind(transaction.user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?
+    .ok_or_else(|| {
+        tracing::warn!("Transaction owner not found or inactive for user: {}", transaction.user_id);
+        HttpError::unauthorized("Unauthorized transaction - user not found or inactive")
+    })?;
+
+    // SECURITY: Additional check - verify the transaction amount matches webhook amount
+    if transaction.amount != amount_kobo {
+        tracing::warn!("Amount mismatch for reference {}: expected {}, got {}", 
+            reference, transaction.amount, amount_kobo);
+        return Err(HttpError::bad_request("Amount mismatch in webhook"));
+    }
+
+    // Only process if transaction is still pending - RACE CONDITION PROTECTION
     if transaction.status != Some(TransactionStatus::Pending) {
         tracing::info!("Transaction {} already processed with status: {:?}", reference, transaction.status);
+        tx.commit().await.map_err(|e| HttpError::server_error(e.to_string()))?;
         return Ok(());
     }
 
-    // Update transaction status first
-    let updated_transaction = app_state.db_client
-        .update_transaction_status(
-            transaction.id,
-            TransactionStatus::Completed,
-            gateway_reference,
-        )
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+    // Update transaction status first within the transaction
+    let _updated_transaction = sqlx::query_as::<_, WalletTransaction>(
+        r#"
+        UPDATE wallet_transactions 
+        SET status = 'completed'::transaction_status, 
+            external_reference = $1, 
+            completed_at = NOW()
+        WHERE id = $2
+        RETURNING *
+        "#
+    )
+    .bind(gateway_reference)
+    .bind(transaction.id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let transaction_type = transaction.transaction_type.unwrap_or(TransactionType::Deposit);
+    // Update wallet balance within the same transaction
+    let _wallet_update_result = sqlx::query(
+        r#"
+        UPDATE naira_wallets 
+        SET balance = balance + $1, 
+            available_balance = available_balance + $1,
+            total_deposits = total_deposits + $1,
+            updated_at = NOW(),
+            last_activity_at = NOW()
+        WHERE user_id = $2 AND id = $3
+        RETURNING id
+        "#
+    )
+    .bind(amount_kobo)
+    .bind(transaction.user_id)
+    .bind(transaction.wallet_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // Credit the wallet
-    let _wallet_transaction = app_state.db_client
-        .credit_wallet(
-            transaction.user_id,
-            amount_kobo,
-            transaction_type,
-            "Payment confirmed via Paystack webhook".to_string(),
-            reference.to_string(),
-            updated_transaction.external_reference.clone(),
-            Some(serde_json::json!(data)),
-        )
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
-
+    // SECURITY: Log security-relevant information
     tracing::info!(
-        "Successfully processed Paystack payment for reference: {}, user: {}, amount: {}",
+        "SECURITY: Successfully processed Paystack payment - reference: {}, user: {}, amount: {}, wallet: {}",
         reference,
         transaction.user_id,
-        amount_kobo
+        amount_kobo,
+        transaction.wallet_id
     );
+
+    // Commit the transaction
+    tx.commit().await.map_err(|e| HttpError::server_error(e.to_string()))?;
 
     Ok(())
 }

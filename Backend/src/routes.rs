@@ -24,7 +24,7 @@ use crate::{
         vendor::vendor_handler, 
         verification::verification_handler
     }, 
-    middleware::auth
+    middleware::main_middleware::auth
 };
 
 // Health check handler with cache status
@@ -154,7 +154,7 @@ let protected_labour_routes = Router::new()
         .nest("/admin", cache_routes)  
         .nest("/debug", Router::new().route("/reco/push", post(crate::handler::debug::push_reco_event)))
     .layer(TraceLayer::new_for_http())
-    .layer(middleware::from_fn(crate::middleware::cache_and_rate_limit))
+    .layer(middleware::from_fn(crate::middleware::main_middleware::cache_and_rate_limit))
     .layer(Extension(app_state));
 
     Router::new()
