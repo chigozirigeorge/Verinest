@@ -18,6 +18,24 @@ impl NotificationService {
     pub fn new(db_client: Arc<DBClient>) -> Self {
         Self { db_client }
     }
+
+    // Helper function to send emails with graceful error handling
+    async fn send_email_gracefully(
+        &self,
+        to_email: &str,
+        email_type: &str,
+        result: Result<(), String>,
+    ) {
+        match result {
+            Ok(_) => {
+                tracing::info!("{} email sent successfully to {}", email_type, to_email);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to send {} email to {}: {}", email_type, to_email, e);
+                // Don't return error - notification was already created
+            }
+        }
+    }
     
     // Helper to create notification and send email
     async fn create_notification_with_email(
@@ -28,8 +46,8 @@ impl NotificationService {
         notification_type: String,
         related_id: Option<Uuid>,
         send_email: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // Create in-app notification
+    ) -> Result<(), String> {
+        // Create in-app notification first
         sqlx::query(
             r#"
             INSERT INTO notifications (user_id, title, message, notification_type, related_id)
@@ -42,13 +60,22 @@ impl NotificationService {
         .bind(&notification_type)
         .bind(related_id)
         .execute(&self.db_client.pool)
-        .await?;
+        .await
+            .map_err(|e| e.to_string())?;
         
-        // Send email if requested
+        // Send email if requested (non-blocking, continue even if email fails)
         if send_email {
             if let Ok(Some(user)) = self.db_client.get_user(Some(user_id), None, None, None).await {
                 // Send email based on notification type
-                let _ = self.send_notification_email(&user.email, &user.name, &title, &message, &notification_type).await;
+                match self.send_notification_email(&user.email, &user.name, &title, &message, &notification_type).await {
+                    Ok(_) => {
+                        tracing::info!("Email sent successfully for notification to user {}", user_id);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Email sending failed for notification to user {}: {}, but notification was created", user_id, e);
+                        // Continue execution even if email fails
+                    }
+                }
             }
         }
         
@@ -62,22 +89,23 @@ impl NotificationService {
         title: &str,
         message: &str,
         notification_type: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         // Use appropriate email template based on notification type
-              mails::send_notification_email(
-                to_email, 
-                username, 
-                title, 
-                message, 
-                notification_type
-            ).await;
+        mails::send_notification_email(
+            to_email, 
+            username, 
+            title, 
+            message, 
+            notification_type
+        ).await
+        .map_err(|e| e.to_string())?;
 
-            Ok(())
+        Ok(())
          
     }
     
     // Job-related notifications with email
-    pub async fn notify_new_job(&self, job: &Job) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn notify_new_job(&self, job: &Job) -> Result<(), String> {
         // Notify all workers in the same state and category
         let workers = self.db_client
             .get_workers_by_location_and_category(
@@ -86,7 +114,8 @@ impl NotificationService {
                 100, // limit
                 0,   // offset
             )
-            .await?;
+            .await
+            .map_err(|e| e.to_string())?;
         
         for worker_profile in workers {
             self.create_notification_with_email(
@@ -97,7 +126,8 @@ impl NotificationService {
                 "new_job".to_string(),
                 Some(job.id),
                 false, // Don't send email for every new job
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
         }
         
         Ok(())
@@ -108,7 +138,7 @@ impl NotificationService {
         employer_id: Uuid,
         job: &Job,
         applicant_name: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         // Get employer details
         if let Ok(Some(employer)) = self.db_client.get_user(Some(employer_id), None, None, None).await {
             // Create notification
@@ -119,14 +149,20 @@ impl NotificationService {
                 "job_application".to_string(),
                 Some(job.id),
                 true, // Send email for applications
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
             
-            // Send dedicated email
-            let _ = mails::send_job_application_email(
+            // Send dedicated email (non-blocking)
+            self.send_email_gracefully(
                 &employer.email,
-                &employer.name,
-                &job.title,
-                applicant_name,
+                "job application",
+                mails::send_job_application_email(
+                    &employer.email,
+                    &employer.name,
+                    &job.title,
+                    applicant_name,
+                ).await
+                .map_err(|e| e.to_string()),
             ).await;
         }
         
@@ -139,7 +175,7 @@ impl NotificationService {
         job: &Job,
         _application: &JobApplication,
         rejection_reason: &String,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         if let Ok(Some(worker)) = self.db_client.get_user(Some(worker_id), None, None, None).await {
             self.create_notification_with_email(
                 worker_id,
@@ -148,13 +184,19 @@ impl NotificationService {
                 "job_assigned".to_string(),
                 Some(job.id),
                 true, // Send email for assignment
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
             
-            // Send dedicated email
-            let _ = mails::send_job_assignment_email(
+            // Send dedicated email (non-blocking)
+            self.send_email_gracefully(
                 &worker.email,
-                &worker.name,
-                &job.title,
+                "job assignment",
+                mails::send_job_assignment_email(
+                    &worker.email,
+                    &worker.name,
+                    &job.title,
+                ).await
+                .map_err(|e| e.to_string()),
             ).await;
         }
         
@@ -164,7 +206,7 @@ impl NotificationService {
     pub async fn notify_verification_rejected(
         &self,
         verification: &VerificationDocument,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         if let Ok(Some(user)) = self.db_client.get_user(Some(verification.user_id), None, None, None).await {
             self.create_notification_with_email(
                 user.id,
@@ -173,15 +215,19 @@ impl NotificationService {
                 "verification declined".to_string(),
                 Some(verification.user_id),
                 true, 
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
             
-            // Send dedicated email
-            let _ = mails::send_verification_status_email(
+            // Send dedicated email (non-blocking)
+            match mails::send_verification_status_email(
                 &user.email, 
                 &user.username, 
                 &VerificationStatus::Rejected,
                 verification.review_notes.as_deref()
-            ).await;
+            ).await {
+                Ok(_) => tracing::info!("Verification rejection email sent to {}", user.email),
+                Err(e) => tracing::warn!("Failed to send verification rejection email to {}: {}", user.email, e),
+            }
         }
         
         Ok(())
@@ -191,7 +237,7 @@ impl NotificationService {
     pub async fn notify_verification_accepted(
         &self,
         verification: &VerificationDocument,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         if let Ok(Some(user)) = self.db_client.get_user(Some(verification.user_id), None, None, None).await {
             self.create_notification_with_email(
                 user.id,
@@ -200,14 +246,20 @@ impl NotificationService {
                 "verification declined".to_string(),
                 Some(verification.user_id),
                 true, 
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
             
-            // Send dedicated email
-            let _ = mails::send_verification_status_email(
-                &user.email, 
-                &user.username, 
-                &VerificationStatus::Approved,
-                verification.review_notes.as_deref()
+            // Send dedicated email (non-blocking)
+            self.send_email_gracefully(
+                &user.email,
+                "verification status",
+                mails::send_verification_status_email(
+                    &user.email, 
+                    &user.username, 
+                    &VerificationStatus::Approved,
+                    verification.review_notes.as_deref()
+                ).await
+                .map_err(|e| e.to_string()),
             ).await;
         }
         
@@ -219,7 +271,7 @@ impl NotificationService {
         worker_id: Uuid,
         job: &Job,
         _application: &JobApplication,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         if let Ok(Some(worker)) = self.db_client.get_user(Some(worker_id), None, None, None).await {
             self.create_notification_with_email(
                 worker_id,
@@ -228,13 +280,19 @@ impl NotificationService {
                 "job_assigned".to_string(),
                 Some(job.id),
                 true, // Send email for assignment
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
             
-            // Send dedicated email
-            let _ = mails::send_job_assignment_email(
+            // Send dedicated email (non-blocking)
+            self.send_email_gracefully(
                 &worker.email,
-                &worker.name,
-                &job.title,
+                "job assignment",
+                mails::send_job_assignment_email(
+                    &worker.email,
+                    &worker.name,
+                    &job.title,
+                ).await
+                .map_err(|e| e.to_string()),
             ).await;
         }
         
@@ -245,7 +303,7 @@ impl NotificationService {
         &self,
         worker_id: Uuid,
         job: &Job,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         if let Ok(Some(worker)) = self.db_client.get_user(Some(worker_id), None, None, None).await {
             self.create_notification_with_email(
                 worker_id,
@@ -254,13 +312,19 @@ impl NotificationService {
                 "job_assigned".to_string(),
                 Some(job.id),
                 true, // Send email for assignment
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
             
-            // Send dedicated email
-            let _ = mails::send_job_assignment_email(
+            // Send dedicated email (non-blocking)
+            self.send_email_gracefully(
                 &worker.email,
-                &worker.name,
-                &job.title,
+                "job assignment",
+                mails::send_job_assignment_email(
+                    &worker.email,
+                    &worker.name,
+                    &job.title,
+                ).await
+                .map_err(|e| e.to_string()),
             ).await;
         }
         
@@ -271,7 +335,7 @@ impl NotificationService {
         &self,
         employer_id: Uuid,
         progress: &JobProgress,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             employer_id,
             "Job Progress Update".to_string(),
@@ -280,7 +344,8 @@ impl NotificationService {
             "progress_update".to_string(),
             Some(progress.job_id),
             true, // Send email for progress updates
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -289,7 +354,7 @@ impl NotificationService {
         &self,
         user_id: Uuid,
         job: &Job,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         if let Ok(Some(user)) = self.db_client.get_user(Some(user_id), None, None, None).await {
             self.create_notification_with_email(
                 user_id,
@@ -298,13 +363,19 @@ impl NotificationService {
                 "job_completion".to_string(),
                 Some(job.id),
                 true, // Send email for completion
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
             
-            // Send dedicated email
-            let _ = mails::send_job_completion_email(
+            // Send dedicated email (non-blocking)
+            self.send_email_gracefully(
                 &user.email,
-                &user.name,
-                &job.title,
+                "job completion",
+                mails::send_job_completion_email(
+                    &user.email,
+                    &user.name,
+                    &job.title,
+                ).await
+                .map_err(|e| e.to_string()),
             ).await;
         }
         
@@ -316,7 +387,7 @@ impl NotificationService {
         worker_id: Uuid,
         job_id: Uuid,
         amount: f64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         if let Ok(Some(worker)) = self.db_client.get_user(Some(worker_id), None, None, None).await {
             self.create_notification_with_email(
                 worker_id,
@@ -325,13 +396,19 @@ impl NotificationService {
                 "payment_released".to_string(),
                 Some(job_id),
                 true, // Send email for payment release
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
             
-            // Send dedicated email
-            let _ = mails::send_payment_released_email(
+            // Send dedicated email (non-blocking)
+            self.send_email_gracefully(
                 &worker.email,
-                &worker.name,
-                amount,
+                "payment released",
+                mails::send_payment_released_email(
+                    &worker.email,
+                    &worker.name,
+                    amount,
+                ).await
+                .map_err(|e| e.to_string()),
             ).await;
         }
         
@@ -344,7 +421,7 @@ impl NotificationService {
         raised_by: Uuid,
         against: Uuid,
         dispute: &Dispute,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         // Notify the party being disputed against
         self.create_notification_with_email(
             against,
@@ -353,7 +430,8 @@ impl NotificationService {
             "dispute_created".to_string(),
             Some(dispute.id),
             true, // Send email for disputes
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         // Notify the party who raised the dispute (confirmation)
         self.create_notification_with_email(
@@ -363,7 +441,8 @@ impl NotificationService {
             "dispute_confirmation".to_string(),
             Some(dispute.id),
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -374,7 +453,7 @@ impl NotificationService {
         against: Uuid,
         dispute: &Dispute,
         decision: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         let message = format!("Dispute resolved: {}", decision);
         
         // Notify both parties
@@ -386,7 +465,8 @@ impl NotificationService {
                 "dispute_resolved".to_string(),
                 Some(dispute.id),
                 true, // Send email for resolution
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
         }
         
         Ok(())
@@ -398,7 +478,7 @@ impl NotificationService {
         recipient_id: Uuid,
         sender_name: &str,
         message: &Message,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         let content_preview = if message.content.len() > 50 {
             format!("{}...", &message.content[..50])
         } else {
@@ -412,7 +492,8 @@ impl NotificationService {
             "new_message".to_string(),
             Some(message.chat_id),
             false, // Don't send email for every message
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -422,7 +503,7 @@ impl NotificationService {
         recipient_id: Uuid,
         proposer_name: &str,
         job: &Job,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             recipient_id,
             "Contract Proposal".to_string(),
@@ -430,7 +511,8 @@ impl NotificationService {
             "contract_proposal".to_string(),
             Some(job.id),
             true, // Send email for contract proposals
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -440,7 +522,7 @@ impl NotificationService {
         employer_id: Uuid,
         worker_id: Uuid,
         job: &Job,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
        let _worker_email =  self.create_notification_with_email(
             worker_id, 
             "Contract Accepted".to_string(), 
@@ -448,7 +530,8 @@ impl NotificationService {
             "contract_signed".to_string(), 
             Some(job.id), 
             true
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
 
         let _employer_email =  self.create_notification_with_email(
             employer_id, 
@@ -457,7 +540,8 @@ impl NotificationService {
             "contract_signed".to_string(), 
             Some(job.id), 
             true
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -466,7 +550,7 @@ impl NotificationService {
         &self,
         proposer_id: Uuid,
         job: &Job,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             proposer_id,
             "Contract Accepted".to_string(),
@@ -474,7 +558,8 @@ impl NotificationService {
             "contract_accepted".to_string(),
             Some(job.id),
             true, // Send email for acceptance
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -482,7 +567,7 @@ impl NotificationService {
     pub async fn notify_contract_rejected(
         &self,
         proposer_id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             proposer_id,
             "Contract Declined".to_string(),
@@ -490,7 +575,8 @@ impl NotificationService {
             "contract_rejected".to_string(),
             None,
             true, // Send email for rejection
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -502,7 +588,7 @@ impl NotificationService {
         transaction_type: &str,
         amount: f64,
         reference: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         if let Ok(Some(user)) = self.db_client.get_user(Some(user_id), None, None, None).await {
             let title = match transaction_type {
                 "deposit" => "Deposit Successful",
@@ -519,21 +605,42 @@ impl NotificationService {
                 transaction_type.to_string(),
                 None,
                 true, // Send email for wallet transactions
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
             
-            // Send dedicated emails based on type
+            // Send dedicated emails based on type (non-blocking)
             match transaction_type {
                 "deposit" => {
-                    let _ = mails::send_deposit_email(&user.email, &user.name, amount, reference).await;
+                    self.send_email_gracefully(
+                        &user.email,
+                        "deposit",
+                        mails::send_deposit_email(&user.email, &user.name, amount, reference).await
+                        .map_err(|e| e.to_string()),
+                    ).await;
                 }
                 "withdrawal" => {
-                    let _ = mails::send_withdrawal_email(&user.email, &user.name, amount, reference).await;
+                    self.send_email_gracefully(
+                        &user.email,
+                        "withdrawal",
+                        mails::send_withdrawal_email(&user.email, &user.name, amount, reference).await
+                        .map_err(|e| e.to_string()),
+                    ).await;
                 }
                 "transfer_sent" => {
-                    let _ = mails::send_transfer_email(&user.email, &user.name, amount, reference, "sent").await;
+                    self.send_email_gracefully(
+                        &user.email,
+                        "transfer sent",
+                        mails::send_transfer_email(&user.email, &user.name, amount, reference, "sent").await
+                        .map_err(|e| e.to_string()),
+                    ).await;
                 }
                 "transfer_received" => {
-                    let _ = mails::send_transfer_email(&user.email, &user.name, amount, reference, "received").await;
+                    self.send_email_gracefully(
+                        &user.email,
+                        "transfer received",
+                        mails::send_transfer_email(&user.email, &user.name, amount, reference, "received").await
+                        .map_err(|e| e.to_string()),
+                    ).await;
                 }
                 _ => {}
             }
@@ -589,7 +696,7 @@ impl NotificationService {
     pub async fn mark_all_notifications_read(
         &self,
         user_id: Uuid,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), String> {
         sqlx::query(
             r#"
             UPDATE notifications
@@ -599,7 +706,8 @@ impl NotificationService {
         )
         .bind(user_id)
         .execute(&self.db_client.pool)
-        .await?;
+        .await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -609,7 +717,7 @@ impl NotificationService {
         employer_id: Uuid,
         job: &Job,
         _worker_profile: &WorkerProfile,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             employer_id,
             format!("Worker assigned to job {}", job.title),
@@ -617,7 +725,8 @@ impl NotificationService {
             "worker assigned to job".to_string(),
             None,
             true
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -625,7 +734,7 @@ impl NotificationService {
         &self,
         user_id: Uuid,
         contract: &JobContract,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             user_id,
             "Contract needs signature".to_string(),
@@ -633,7 +742,8 @@ impl NotificationService {
             "Contract awaiting signature".to_string(),
             None,
             true
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -656,7 +766,7 @@ impl NotificationService {
     //         None,
     //         true,
     //     ).await?;
-        
+    //        
     //     Ok(())
     // }
 
@@ -666,7 +776,7 @@ impl NotificationService {
         service_title: &str,
         total_amount: f64,
         order_number: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             vendor_user_id,
             "New Order Received".to_string(),
@@ -674,7 +784,8 @@ impl NotificationService {
             "new_order".to_string(),
             None,
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -685,7 +796,7 @@ impl NotificationService {
         service_title: &str,
         total_amount: f64,
         order_number: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             buyer_id,
             "Order Placed Successfully".to_string(),
@@ -693,7 +804,8 @@ impl NotificationService {
             "order_placed".to_string(),
             None,
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -703,7 +815,7 @@ impl NotificationService {
         buyer_id: Uuid,
         service_title: &str,
         order_number: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             buyer_id,
             "Order Confirmed".to_string(),
@@ -711,7 +823,8 @@ impl NotificationService {
             "order_confirmed".to_string(),
             None,
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -721,7 +834,7 @@ impl NotificationService {
         vendor_user_id: Uuid,
         service_title: &str,
         vendor_amount: f64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             vendor_user_id,
             "Order Completed - Payment Released".to_string(),
@@ -729,7 +842,8 @@ impl NotificationService {
             "order_completed".to_string(),
             None,
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -739,7 +853,7 @@ impl NotificationService {
         vendor_user_id: Uuid,
         inquirer_name: &str,
         service_title: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         if let Ok(Some(user)) = self.db_client.get_user(Some(vendor_user_id), None, None, None).await {
             self.create_notification_with_email(
                 vendor_user_id,
@@ -748,14 +862,20 @@ impl NotificationService {
                 "service_inquiry".to_string(),
                 None,
                 true,
-            ).await?;
+            ).await
+            .map_err(|e| e.to_string())?;
             
-            // Send dedicated email
-            let _ = mails::send_service_inquiry_email(
+            // Send dedicated email (non-blocking)
+            self.send_email_gracefully(
                 &user.email,
-                &user.name,
-                inquirer_name,
-                service_title,
+                "service inquiry",
+                mails::send_service_inquiry_email(
+                    &user.email,
+                    &user.name,
+                    inquirer_name,
+                    service_title,
+                ).await
+                .map_err(|e| e.to_string()),
             ).await;
         }
         
@@ -767,7 +887,7 @@ impl NotificationService {
         vendor_user_id: Uuid,
         service_title: &str,
         days_until_expiry: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             vendor_user_id,
             "Service Expiring Soon".to_string(),
@@ -775,7 +895,8 @@ impl NotificationService {
             "service_expiring".to_string(),
             None,
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -784,7 +905,7 @@ impl NotificationService {
         &self,
         vendor_user_id: Uuid,
         days_until_expiry: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             vendor_user_id,
             "Subscription Expiring Soon".to_string(),
@@ -792,7 +913,8 @@ impl NotificationService {
             "subscription_expiring".to_string(),
             None,
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -803,7 +925,7 @@ impl NotificationService {
         buyer_id: Uuid,
         service: &VendorService,
         order: &ServiceOrder,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         // Notify vendor
         self.create_notification_with_email(
             vendor_user_id,
@@ -812,7 +934,8 @@ impl NotificationService {
             "service_order".to_string(),
             Some(order.id),
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         // Notify buyer (confirmation)
         self.create_notification_with_email(
@@ -822,7 +945,8 @@ impl NotificationService {
             "order_confirmation".to_string(),
             Some(order.id),
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -831,7 +955,7 @@ impl NotificationService {
         &self,
         buyer_id: Uuid,
         order: &ServiceOrder,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             buyer_id,
             "Order Shipped".to_string(),
@@ -839,7 +963,8 @@ impl NotificationService {
             "order_shipped".to_string(),
             Some(order.id),
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -848,7 +973,7 @@ impl NotificationService {
         &self,
         vendor_user_id: Uuid,
         order: &ServiceOrder,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             vendor_user_id,
             "Delivery Confirmed".to_string(),
@@ -856,7 +981,8 @@ impl NotificationService {
             "delivery_confirmed".to_string(),
             Some(order.id),
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -866,7 +992,7 @@ impl NotificationService {
         raised_by: Uuid,
         against: Uuid,
         dispute: &ServiceDispute,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         // Notify party being disputed against
         self.create_notification_with_email(
             against,
@@ -875,7 +1001,8 @@ impl NotificationService {
             "service_dispute".to_string(),
             Some(dispute.id),
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         // Confirm to party who raised it
         self.create_notification_with_email(
@@ -885,7 +1012,8 @@ impl NotificationService {
             "dispute_confirmation".to_string(),
             Some(dispute.id),
             true,
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
         
         Ok(())
     }
@@ -894,7 +1022,7 @@ impl NotificationService {
         &self,
         vendor_id: Uuid,
         subscription_tier: SubscriptionTier
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         self.create_notification_with_email(
             vendor_id, 
             "Subscription upgraded".to_string(), 
@@ -902,7 +1030,8 @@ impl NotificationService {
             "service upgrade".to_string(), 
             None, 
             true
-        ).await?;
+        ).await
+            .map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -921,7 +1050,8 @@ impl NotificationService {
     //         "contract_active".to_string(),
     //         Some(job.id),
     //         true,
-    //     ).await?;
+    //     ).await
+            // .map_err(|e| e.to_string())?;
         
     //     // Notify worker
     //     self.create_notification_with_email(
@@ -931,7 +1061,8 @@ impl NotificationService {
     //         "contract_active".to_string(),
     //         Some(job.id),
     //         true,
-    //     ).await?;
+    //     ).await
+            // .map_err(|e| e.to_string())?;
         
     //     Ok(())
     // }
@@ -948,7 +1079,8 @@ impl NotificationService {
     //         "Job assigned notification".to_string(),
     //         None,
     //         true,
-    //     ).await?;
+    //     ).await
+            // .map_err(|e| e.to_string())?;
     //     Ok(())
     // }
 }

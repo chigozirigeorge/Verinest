@@ -180,6 +180,7 @@ async fn main() {
         "https://verinest.up.railway.app".parse::<HeaderValue>().unwrap(),
         "http://localhost:5173".parse::<HeaderValue>().unwrap(),
         "http://localhost:8000".parse::<HeaderValue>().unwrap(),
+        "http://api.verinest.xyz".parse::<HeaderValue>().unwrap()
     ];
 
     let cors = CorsLayer::new()

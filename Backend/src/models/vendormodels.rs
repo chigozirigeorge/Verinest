@@ -220,6 +220,7 @@ pub struct ServiceOrder {
     pub confirmed_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub cancelled_at: Option<DateTime<Utc>>,
+    pub escrow_id: Option<Uuid>, // Link to escrow transaction
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -239,6 +240,7 @@ pub struct ServiceReview {
 pub enum OrderStatus {
     Pending,           // Payment pending
     Paid,              // Payment received, processing
+    Confirmed,         // Order confirmed by vendor
     Processing,        // Vendor is preparing order
     Shipped,           // Order shipped (for cross-state)
     InTransit,         // In delivery

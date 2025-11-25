@@ -76,6 +76,12 @@ impl From<Box<dyn std::error::Error>> for ServiceError {
     }
 }
 
+impl From<String> for ServiceError {
+    fn from(err: String) -> Self {
+        ServiceError::Other(err)
+    }
+}
+
 impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {

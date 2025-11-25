@@ -47,6 +47,7 @@ hmac = "0.12"
 regex = "1.0"
 redis = { version = "0.23", features = ["tokio-comp", "connection-manager"] }
 md5 = "0.7"
+ammonia = "4.1"
 
 [profile.release]
 opt-level = "z"  # Optimize for size

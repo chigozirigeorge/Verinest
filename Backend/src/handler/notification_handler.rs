@@ -256,7 +256,7 @@ pub fn notification_routes() -> Router {
         .route("/:id", delete(delete_notification))
 }
 
-// Get user notifications with pagination
+// Get user notifications with pagination and proper authorization
 async fn get_user_notifications(
     Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth): Extension<JWTAuthMiddeware>,
@@ -266,7 +266,13 @@ async fn get_user_notifications(
     let limit = pagination.limit.unwrap_or(20).min(100) as i64;
     let offset = ((page - 1) * limit as u32) as i64;
 
-    println!("📬 [get_user_notifications] Fetching for user: {}", auth.user.id);
+    // Authorization check: verify user can only access their own notifications
+    let user_id = auth.user.id;
+    
+    // Log the access attempt for audit
+    tracing::info!("User {} attempting to access notifications", user_id);
+
+    println!("📬 [get_user_notifications] Fetching for user: {}", user_id);
 
     // Get total count
     let total: i64 = sqlx::query_scalar(
@@ -276,12 +282,12 @@ async fn get_user_notifications(
         WHERE user_id = $1
         "#
     )
-    .bind(auth.user.id)
+    .bind(user_id)
     .fetch_one(&app_state.db_client.pool)
     .await
     .map_err(|e| {
         println!("❌ [get_user_notifications] Count query failed: {}", e);
-        HttpError::server_error(format!("Failed to count notifications: {}", e))
+        HttpError::server_error("Failed to count notifications")
     })?;
 
     // Get unread count
@@ -292,15 +298,15 @@ async fn get_user_notifications(
         WHERE user_id = $1 AND is_read = false
         "#
     )
-    .bind(auth.user.id)
+    .bind(user_id)
     .fetch_one(&app_state.db_client.pool)
     .await
     .map_err(|e| {
         println!("❌ [get_user_notifications] Unread count query failed: {}", e);
-        HttpError::server_error(format!("Failed to count unread notifications: {}", e))
+        HttpError::server_error("Failed to count unread notifications")
     })?;
 
-    // Get notifications
+    // Get notifications with explicit user_id filter
     let notifications = sqlx::query_as::<_, Notification>(
         r#"
         SELECT id, user_id, title, message, notification_type, 
@@ -311,17 +317,26 @@ async fn get_user_notifications(
         LIMIT $2 OFFSET $3
         "#
     )
-    .bind(auth.user.id)
+    .bind(user_id)
     .bind(limit)
     .bind(offset)
     .fetch_all(&app_state.db_client.pool)
     .await
     .map_err(|e| {
         println!("❌ [get_user_notifications] Query failed: {}", e);
-        HttpError::server_error(format!("Failed to fetch notifications: {}", e))
+        HttpError::server_error("Failed to fetch notifications")
     })?;
 
+    // Additional authorization check: verify all returned notifications belong to the user
+    for notification in &notifications {
+        if notification.user_id != user_id {
+            tracing::warn!("Unauthorized notification access attempt: user {} tried to access notification {}", user_id, notification.id);
+            return Err(HttpError::bad_request("Unauthorized access to notification"));
+        }
+    }
+
     println!("✅ [get_user_notifications] Found {} notifications", notifications.len());
+    tracing::info!("Successfully retrieved {} notifications for user {}", notifications.len(), user_id);
 
     let response = NotificationResponse {
         notifications,
@@ -366,15 +381,45 @@ async fn get_unread_count(
     })))
 }
 
-// Mark specific notifications as read
+// Mark specific notifications as read with authorization
 async fn mark_notifications_read(
     Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth): Extension<JWTAuthMiddeware>,
     Json(payload): Json<MarkReadRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
-    println!("📬 [mark_notifications_read] For user: {}", auth.user.id);
+    let user_id = auth.user.id;
+    println!("📬 [mark_notifications_read] For user: {}", user_id);
+    
+    // Log the operation for audit
+    tracing::info!("User {} attempting to mark notifications as read", user_id);
 
     if let Some(notification_ids) = payload.notification_ids {
+        // Authorization check: verify user owns all notifications
+        for notification_id in &notification_ids {
+            let owner_check: Option<uuid::Uuid> = sqlx::query_scalar(
+                "SELECT user_id FROM notifications WHERE id = $1"
+            )
+            .bind(notification_id)
+            .fetch_optional(&app_state.db_client.pool)
+            .await
+            .map_err(|_| HttpError::server_error("Failed to verify notification ownership"))?;
+            
+            match owner_check {
+                Some(owner_id) if owner_id == user_id => {
+                    // User owns the notification, proceed
+                }
+                Some(_) => {
+                    tracing::warn!("Unauthorized notification access: user {} tried to mark notification {} as read", user_id, notification_id);
+                    return Err(HttpError::bad_request("Unauthorized access to notification"));
+                }
+                None => {
+                    tracing::warn!("Notification {} not found for user {}", notification_id, user_id);
+                    return Err(HttpError::not_found("Notification not found"));
+                }
+            }
+        }
+        
+        // Mark notifications as read
         for notification_id in &notification_ids {
             sqlx::query(
                 r#"
@@ -384,16 +429,17 @@ async fn mark_notifications_read(
                 "#
             )
             .bind(notification_id)
-            .bind(auth.user.id)
+            .bind(user_id)
             .execute(&app_state.db_client.pool)
             .await
             .map_err(|e| {
                 println!("❌ [mark_notifications_read] Failed for {}: {}", notification_id, e);
-                HttpError::server_error(format!("Failed to mark notification as read: {}", e))
+                HttpError::server_error("Failed to mark notification as read")
             })?;
         }
 
         println!("✅ [mark_notifications_read] Marked {} notifications as read", notification_ids.len());
+        tracing::info!("User {} successfully marked {} notifications as read", user_id, notification_ids.len());
     }
 
     Ok(Json(ApiResponse::success(
@@ -466,13 +512,40 @@ async fn mark_single_notification_read(
     )))
 }
 
-// Delete notification
+// Delete notification with authorization
 async fn delete_notification(
     Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth): Extension<JWTAuthMiddeware>,
     Path(notification_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, HttpError> {
+    let user_id = auth.user.id;
     println!("📬 [delete_notification] Notification: {}", notification_id);
+    
+    // Log the operation for audit
+    tracing::info!("User {} attempting to delete notification {}", user_id, notification_id);
+    
+    // Authorization check: verify user owns the notification
+    let owner_check: Option<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT user_id FROM notifications WHERE id = $1"
+    )
+    .bind(notification_id)
+    .fetch_optional(&app_state.db_client.pool)
+    .await
+    .map_err(|e| HttpError::server_error("Failed to verify notification ownership"))?;
+    
+    match owner_check {
+        Some(owner_id) if owner_id == user_id => {
+            // User owns the notification, proceed with deletion
+        }
+        Some(_) => {
+            tracing::warn!("Unauthorized notification access: user {} tried to delete notification {}", user_id, notification_id);
+            return Err(HttpError::bad_request("Unauthorized access to notification"));
+        }
+        None => {
+            tracing::warn!("Notification {} not found for user {}", notification_id, user_id);
+            return Err(HttpError::not_found("Notification not found"));
+        }
+    }
 
     let result = sqlx::query(
         r#"
@@ -481,12 +554,12 @@ async fn delete_notification(
         "#
     )
     .bind(notification_id)
-    .bind(auth.user.id)
+    .bind(user_id)
     .execute(&app_state.db_client.pool)
     .await
     .map_err(|e| {
         println!("❌ [delete_notification] Failed: {}", e);
-        HttpError::server_error(format!("Failed to delete notification: {}", e))
+        HttpError::server_error("Failed to delete notification")
     })?;
 
     if result.rows_affected() == 0 {
@@ -494,6 +567,7 @@ async fn delete_notification(
     }
 
     println!("✅ [delete_notification] Deleted successfully");
+    tracing::info!("User {} successfully deleted notification {}", user_id, notification_id);
 
     Ok(Json(ApiResponse::success(
         "Notification deleted",

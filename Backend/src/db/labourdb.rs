@@ -208,6 +208,12 @@ async fn assign_worker_to_job(
         release_percentage: f64,
     ) -> Result<EscrowTransaction, Error>;
 
+    async fn get_escrow_transaction(
+        &self,
+        escrow_id: Uuid,
+    ) -> Result<Option<EscrowTransaction>, Error>;
+
+
     //Job Progress Tracking
     async fn submit_job_progress(
         &self,
@@ -1187,28 +1193,6 @@ async fn get_jobs_by_location_and_category(
         .await
     }
 
-    async fn update_escrow_status(
-        &self,
-        escrow_id: Uuid,
-        status: PaymentStatus,
-        transaction_hash: Option<String>,
-    ) -> Result<EscrowTransaction, Error> {
-        sqlx::query_as::<_, EscrowTransaction>(
-            r#"
-            UPDATE escrow_transactions 
-            SET status = $2, transaction_hash = $3
-            WHERE id = $1
-            RETURNING id, job_id, employer_id, worker_id, amount, platform_fee,
-            status, transaction_hash, wallet_hold_id, created_at, released_at
-            "#
-        )
-        .bind(escrow_id)
-        .bind(status)
-        .bind(transaction_hash)
-        .fetch_one(&self.pool)
-        .await
-    }
-
     async fn release_escrow_payment(
     &self,
     escrow_id: Uuid,
@@ -1262,6 +1246,23 @@ async fn get_jobs_by_location_and_category(
 
     tx.commit().await?;
     Ok(updated_escrow)
+}
+
+async fn get_escrow_transaction(
+    &self,
+    escrow_id: Uuid,
+) -> Result<Option<EscrowTransaction>, Error> {
+    sqlx::query_as::<_, EscrowTransaction>(
+        r#"
+        SELECT id, job_id, employer_id, worker_id, amount, platform_fee,
+        status, transaction_hash, created_at, released_at
+        FROM escrow_transactions 
+        WHERE id = $1
+        "#
+    )
+    .bind(escrow_id)
+    .fetch_optional(&self.pool)
+    .await
 }
 
     async fn submit_job_progress(
@@ -1781,5 +1782,46 @@ async fn get_jobs_by_location_and_category(
         .await?;
 
         Ok(())
+    }
+
+    async fn update_escrow_status(
+        &self,
+        escrow_id: Uuid,
+        status: crate::models::labourmodel::PaymentStatus,
+        transaction_hash: Option<String>,
+    ) -> Result<EscrowTransaction, Error> {
+        let mut update_fields = vec!["status = $2"];
+        
+        if status == crate::models::labourmodel::PaymentStatus::Funded {
+            update_fields.push("funded_at = NOW()");
+        } else if status == crate::models::labourmodel::PaymentStatus::Completed {
+            update_fields.push("completed_at = NOW()");
+        } else if status == crate::models::labourmodel::PaymentStatus::PartiallyPaid {
+            update_fields.push("released_at = NOW()");
+        }
+        
+        if let Some(ref _hash) = transaction_hash {
+            update_fields.push("transaction_hash = $3");
+        }
+        
+        let query_str = format!(
+            r#"
+            UPDATE escrow_transactions SET {}, updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, job_id, employer_id, worker_id, amount, platform_fee,
+            status, transaction_hash, created_at, released_at
+            "#,
+            update_fields.join(", ")
+        );
+        
+        let mut query = sqlx::query_as::<_, EscrowTransaction>(&query_str)
+            .bind(escrow_id)
+            .bind(status);
+        
+        if transaction_hash.is_some() {
+            query = query.bind(transaction_hash);
+        }
+        
+        query.fetch_one(&self.pool).await
     }
 }

@@ -171,6 +171,13 @@ pub trait VendorExt {
         status: String,
     ) -> Result<ServiceOrder, Error>;
     
+    async fn update_order_status_with_escrow(
+        &self,
+        order_id: Uuid,
+        status: String,
+        escrow_id: Option<Uuid>,
+    ) -> Result<ServiceOrder, Error>;
+    
     async fn get_vendor_orders(
         &self,
         vendor_id: Uuid,
@@ -834,6 +841,42 @@ impl VendorExt for DBClient {
             .bind(status)
             .fetch_one(&self.pool)
             .await
+    }
+    
+    async fn update_order_status_with_escrow(
+        &self,
+        order_id: Uuid,
+        status: String,
+        escrow_id: Option<Uuid>,
+    ) -> Result<ServiceOrder, Error> {
+        let mut update_fields = vec!["status = $2"];
+        
+        if status == "paid" {
+            update_fields.push("paid_at = NOW()");
+        } else if status == "completed" {
+            update_fields.push("completed_at = NOW()");
+        } else if status == "cancelled" {
+            update_fields.push("cancelled_at = NOW()");
+        }
+        
+        if let Some(escrow_id) = escrow_id {
+            update_fields.push("escrow_id = $3");
+        }
+        
+        let query_str = format!(
+            "UPDATE service_orders SET {}, updated_at = NOW() WHERE id = $1 RETURNING *",
+            update_fields.join(", ")
+        );
+        
+        let mut query = sqlx::query_as::<_, ServiceOrder>(&query_str)
+            .bind(order_id)
+            .bind(status);
+        
+        if escrow_id.is_some() {
+            query = query.bind(escrow_id);
+        }
+        
+        query.fetch_one(&self.pool).await
     }
     
     async fn get_vendor_orders(

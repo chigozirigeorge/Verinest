@@ -21,7 +21,7 @@ use crate::{
     }, dtos::{labordtos::*, userdtos::FilterUserDto}, 
     error::HttpError, middleware::main_middleware::JWTAuthMiddeware,
     models::{labourmodel::*, 
-        usermodel::{User, VerificationStatus}, verificationmodels::OtpPurpose}
+        usermodel::{User, VerificationStatus}}
 };
 
 pub fn labour_handler() -> Router {

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transfer {{direction}}</title>
+    <title>Contract Signature OTP</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -23,7 +23,7 @@
             overflow: hidden;
         }
         .header {
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
             color: white;
             padding: 30px;
             text-align: center;
@@ -45,20 +45,30 @@
             color: #555555;
             margin-bottom: 16px;
         }
-        .transfer-amount {
-            color: #3b82f6;
-            font-weight: 700;
-            font-size: 24px;
-            text-align: center;
-            margin: 20px 0;
+        .contract-title {
+            color: #8b5cf6;
+            font-weight: 600;
+            font-size: 18px;
         }
-        .transfer-details {
-            background-color: #f8f9fa;
+        .otp-code {
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+            color: white;
+            font-size: 32px;
+            font-weight: 700;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            letter-spacing: 8px;
+            margin: 20px 0;
+            box-shadow: 0 4px 6px rgba(139, 92, 246, 0.3);
+        }
+        .contract-details {
+            background-color: #f3f4f6;
             border-radius: 8px;
             padding: 20px;
             margin: 20px 0;
         }
-        .transfer-details p {
+        .contract-details p {
             margin: 8px 0;
         }
         .footer {
@@ -77,40 +87,59 @@
             border-top: 1px solid #e9ecef;
             margin: 25px 0;
         }
-        .direction-sent {
-            color: #ef4444;
-            font-weight: 600;
+        .warning {
+            background-color: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            color: #92400e;
+            font-size: 14px;
         }
-        .direction-received {
-            color: #10b981;
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
             font-weight: 600;
+            margin: 20px 0;
+            transition: all 0.3s ease;
+        }
+        .btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>Transfer {{direction}}</h1>
+            <h1>Contract Signature OTP</h1>
         </div>
         <div class="content">
             <p>Hello, <strong>{{username}}</strong>!</p>
-            <p>Your transfer has been successfully processed:</p>
+            <p>You are about to sign a contract. Please use the following One-Time Password (OTP) to verify your signature:</p>
             
-            <div class="transfer-details">
-                <p><strong>Transfer Amount:</strong></p>
-                <div class="transfer-amount">₦{{amount}}</div>
-                <p><strong>Direction:</strong> <span class="direction-{{direction}}">{{direction}}</span></p>
-                <p><strong>Reference:</strong> {{reference}}</p>
+            <div class="contract-details">
+                <p><strong>Contract:</strong> <span class="contract-title">{{contract_title}}</span></p>
+                <p><strong>Party:</strong> {{other_party}}</p>
+                <p><strong>Terms:</strong> {{contract_terms}}</p>
             </div>
             
-            {{#if is_sent}}
-            <p>The funds have been sent from your account. You can view your transaction history in your dashboard.</p>
-            {{else}}
-            <p>The funds have been received in your account and are available for use. You can view your transaction history in your dashboard.</p>
-            {{/if}}
+            <div class="otp-code">{{otp_code}}</div>
+            
+            <p>This OTP will expire in 10 minutes. Please do not share this code with anyone.</p>
+            
+            <div class="warning">
+                ⚠️ This is a legally binding document. Only proceed if you have read and agree to all terms.
+            </div>
+            
+            <a href="{{contract_url}}" class="btn">Sign Contract</a>
             
             <div class="divider"></div>
-            <p style="color: #777777; font-size: 14px;">If you didn't expect this transfer, please contact support immediately.</p>
+            <p style="color: #777777; font-size: 14px;">If you didn't request this OTP, please contact support immediately.</p>
         </div>
         <div class="footer">
             <p>Best regards,<br>The Verinest Team</p>

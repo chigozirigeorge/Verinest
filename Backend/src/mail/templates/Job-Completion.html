@@ -1,27 +1,117 @@
-<html>
-  <body>
-    <p>Hi {{username}},</p>
-    <p>Your job "{{job_title}}" has been marked completed. Great work!</p>
-    <p>Thanks,<br/>Verinest Team</p>
-  </body>
-</html>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Job Completed</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333333;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            padding: 0;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }
+        .content {
+            padding: 30px;
+        }
+        .content h2 {
+            color: #333333;
+            font-size: 20px;
+            margin-bottom: 20px;
+        }
+        .content p {
+            color: #555555;
+            margin-bottom: 16px;
+        }
+        .job-title {
+            color: #10b981;
+            font-weight: 600;
+            font-size: 18px;
+        }
+        .success-message {
+            background-color: #d1fae5;
+            border: 1px solid #10b981;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            color: #065f46;
+            font-weight: 500;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            margin: 20px 0;
+            transition: all 0.3s ease;
+        }
+        .btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        .footer {
+            background-color: #f8f9fa;
+            padding: 20px 30px;
+            text-align: center;
+            border-top: 1px solid #e9ecef;
+        }
+        .footer p {
+            color: #777777;
+            font-size: 14px;
+            margin: 0;
+        }
+        .divider {
+            border: none;
+            border-top: 1px solid #e9ecef;
+            margin: 25px 0;
+        }
+    </style>
 </head>
-<body style="font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 20px; border-radius: 8px;">
-        <h2 style="color: #333333;">Job Completed</h2>
-        <p style="color: #555555;">Hello, {{username}}!</p>
-        <p style="color: #555555;">Your job <strong>{{job_title}}</strong> has been marked completed. Great work!</p>
-        <p style="color: #555555;">You can view feedback, payment status, and next steps in your dashboard.</p>
-        <hr />
-        <p style="color: #777777; font-size: 12px;">If you have questions, reach out to support.</p>
-        <p style="color: #555555;">Best regards,</p>
-        <p style="color: #555555;">The Verinest Team</p>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Job Completed</h1>
+        </div>
+        <div class="content">
+            <p>Hello, <strong>{{username}}</strong>!</p>
+            <div class="success-message">
+                🎉 Congratulations! Your job has been marked as completed.
+            </div>
+            <p>Job: <span class="job-title">{{job_title}}</span></p>
+            <p>Great work! The client has confirmed that the job is complete. You can view feedback, payment status, and next steps in your dashboard.</p>
+            <a href="https://api.verinest.xyz/dashboard" class="btn">View Job Details</a>
+            <div class="divider"></div>
+            <p style="color: #777777; font-size: 14px;">If you have questions, reach out to support.</p>
+        </div>
+        <div class="footer">
+            <p>Best regards,<br>The Verinest Team</p>
+            <p style="margin-top: 10px; font-size: 12px;">&copy; 2025 VeriNest. All rights reserved.</p>
+        </div>
     </div>
 </body>
 </html>

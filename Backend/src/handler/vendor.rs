@@ -13,12 +13,13 @@ use validator::Validate;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use num_traits::ToPrimitive;
+use crate::models::labourmodel::PaymentStatus;
 
 use crate::{
-    AppState, db::{naira_walletdb::NairaWalletExt, userdb::UserExt, vendordb::VendorExt}, 
+    AppState, db::{labourdb::LaborExt, naira_walletdb::NairaWalletExt, userdb::UserExt, vendordb::VendorExt}, 
     dtos::vendordtos::ConfirmDeliveryDto, error::HttpError, 
     middleware::main_middleware::JWTAuthMiddeware, 
-    models::{usermodel::UserRole, walletmodels::*, vendormodels::*}, service::vendor_order_service::VendorOrderService
+    models::{labourmodel::EscrowTransaction, usermodel::UserRole, vendormodels::*, walletmodels::*}, service::vendor_order_service::VendorOrderService
 };
 use crate::recommendation_models::{Interaction, FeedItemType, InteractionType};
 use crate::services::reco_db::RecoDB;
@@ -885,6 +886,16 @@ pub async fn initiate_purchase(
     let platform_fee = subtotal * 0.05; // 5% platform fee
     let total_amount = subtotal + platform_fee;
     
+    // Calculate transportation cost (10% of subtotal for physical delivery)
+    let transportation_cost = if body.delivery_address.is_some() {
+        subtotal * 0.10 // 10% for transportation
+    } else {
+        0.0 // No transportation for digital services
+    };
+    
+    // Escrow amount = total amount - transportation cost
+    let escrow_amount = total_amount - transportation_cost;
+    
     // Generate payment reference
     let payment_reference = format!("SRV_{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..16].to_uppercase());
     
@@ -906,25 +917,7 @@ pub async fn initiate_purchase(
             )));
         }
         
-        // Debit wallet
-        let _ = app_state.db_client
-            .debit_wallet(
-                auth.user.id,
-                total_kobo,
-                TransactionType::ServicePayment,
-                format!("Purchase: {}", service.title),
-                payment_reference.clone(),
-                None,
-                Some(serde_json::json!({
-                    "service_id": service_id,
-                    "quantity": body.quantity,
-                    "unit_price": unit_price
-                })),
-            )
-            .await
-            .map_err(|e| HttpError::server_error(e.to_string()))?;
-        
-        // Create order with 'paid' status
+        // Create order first
         let order = app_state.db_client
             .create_service_order(
                 service_id,
@@ -938,17 +931,71 @@ pub async fn initiate_purchase(
                 body.buyer_name,
                 body.buyer_email,
                 body.buyer_phone,
-                body.delivery_address,
-                body.delivery_state,
-                body.delivery_city,
-                body.notes,
+                body.delivery_address.clone(),
+                body.delivery_state.clone(),
+                body.delivery_city.clone(),
+                body.notes.clone(),
             )
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
         
-        // Update order to paid
+        // Create escrow transaction for the main amount
+        let escrow = app_state.db_client
+            .create_escrow_transaction(
+                order.id, // Use order_id as job_id for vendor services
+                auth.user.id, // buyer is the employer in escrow context
+                Some(service.vendor_id), // vendor is the worker in escrow context
+                escrow_amount,
+                platform_fee,
+            )
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+        
+        // Debit wallet for total amount
+        let _ = app_state.db_client
+            .debit_wallet(
+                auth.user.id,
+                total_kobo,
+                TransactionType::ServicePayment,
+                format!("Purchase: {}", service.title),
+                payment_reference.clone(),
+                None,
+                Some(serde_json::json!({
+                    "service_id": service_id,
+                    "quantity": body.quantity,
+                    "unit_price": unit_price,
+                    "escrow_id": escrow.id,
+                    "transportation_cost": transportation_cost,
+                    "escrow_amount": escrow_amount
+                })),
+            )
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+        
+        // Release transportation cost to vendor immediately if applicable
+        if transportation_cost > 0.0 {
+            let transport_kobo = (transportation_cost * 100.0) as i64;
+            let _ = app_state.db_client
+                .credit_wallet(
+                    service.vendor_id,
+                    transport_kobo,
+                    TransactionType::ServicePayment,
+                    format!("Transportation cost for order {}", order.order_number),
+                    format!("TRANSPORT_{}", order.id),
+                    None,
+                    Some(serde_json::json!({
+                        "order_id": order.id,
+                        "service_id": service_id,
+                        "buyer_id": auth.user.id
+                    })),
+                )
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?;
+        }
+        
+        // Update order to paid (with escrow)
         let paid_order = app_state.db_client
-            .update_order_status(order.id, "paid".to_string())
+            .update_order_status_with_escrow(order.id, "paid".to_string(), Some(escrow.id))
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
         
@@ -971,10 +1018,16 @@ pub async fn initiate_purchase(
         
         Ok(Json(serde_json::json!({
             "status": "success",
-            "message": "Purchase completed successfully",
+            "message": "Purchase completed with escrow protection",
             "data": {
                 "order": paid_order,
-                "payment_method": "wallet"
+                "payment_method": "wallet",
+                "escrow_details": {
+                    "escrow_id": escrow.id,
+                    "escrow_amount": escrow_amount,
+                    "transportation_cost": transportation_cost,
+                    "total_escrowed": escrow_amount
+                }
             }
         })))
         
@@ -991,7 +1044,9 @@ pub async fn initiate_purchase(
                 Some(serde_json::json!({
                     "service_id": service_id,
                     "quantity": body.quantity,
-                    "type": "service_purchase"
+                    "type": "service_purchase",
+                    "escrow_amount": escrow_amount,
+                    "transportation_cost": transportation_cost
                 })),
             )
             .await
@@ -1007,24 +1062,48 @@ pub async fn initiate_purchase(
                 unit_price,
                 total_amount,
                 platform_fee,
-                payment_reference,
+                payment_reference.clone(),
                 body.buyer_name,
                 body.buyer_email,
                 body.buyer_phone,
-                body.delivery_address,
-                body.delivery_state,
-                body.delivery_city,
-                body.notes,
+                body.delivery_address.clone(),
+                body.delivery_state.clone(),
+                body.delivery_city.clone(),
+                body.notes.clone(),
             )
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+        
+        // Create escrow transaction (will be funded after payment verification)
+        let escrow = app_state.db_client
+            .create_escrow_transaction(
+                order.id, // Use order_id as job_id for vendor services
+                auth.user.id, // buyer is the employer in escrow context
+                Some(service.vendor_id), // vendor is the worker in escrow context
+                escrow_amount,
+                platform_fee,
+            )
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+        
+        // Update order to include escrow_id
+        let updated_order = app_state.db_client
+            .update_order_status_with_escrow(order.id, "pending".to_string(), Some(escrow.id))
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
         
         Ok(Json(serde_json::json!({
             "status": "success",
-            "message": "Payment initiated. Complete payment to confirm order.",
+            "message": "Payment initiated with escrow protection. Complete payment to confirm order.",
             "data": {
-                "order": order,
-                "payment": payment_init
+                "order": updated_order,
+                "payment": payment_init,
+                "escrow_details": {
+                    "escrow_id": escrow.id,
+                    "escrow_amount": escrow_amount,
+                    "transportation_cost": transportation_cost,
+                    "total_escrowed": escrow_amount
+                }
             }
         })))
     }
@@ -1067,18 +1146,64 @@ pub async fn verify_service_purchase(
         .map_err(|e| HttpError::server_error(e.to_string()))?;
     
     if verification.status == "success" {
-        // Update order to paid
-        let paid_order = app_state.db_client
-            .update_order_status(order.id, "paid".to_string())
-            .await
-            .map_err(|e| HttpError::server_error(e.to_string()))?;
+        // Get escrow details from order metadata or get order with escrow
+        let escrow = if let Some(escrow_id) = order.escrow_id {
+            app_state.db_client
+                .get_escrow_transaction(escrow_id)
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?
+                .ok_or_else(|| HttpError::not_found("Escrow transaction not found"))?
+        } else {
+            return Err(HttpError::bad_request("Order does not have escrow protection"));
+        };
         
-        // Get service and vendor
+        // Calculate transportation cost (10% of service subtotal)
         let service = app_state.db_client
             .get_service(order.service_id)
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?
             .ok_or_else(|| HttpError::not_found("Service not found"))?;
+        
+        let subtotal = service.price.to_f64().unwrap_or(0.0) * order.quantity as f64;
+        let transportation_cost = if order.delivery_address.is_some() {
+            subtotal * 0.10 // 10% for transportation
+        } else {
+            0.0
+        };
+        
+        // Update escrow status to funded
+        let funded_escrow = app_state.db_client
+            .update_escrow_status(escrow.id, crate::models::labourmodel::PaymentStatus::Funded, None)
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
+        
+        // Release transportation cost to vendor immediately if applicable
+        if transportation_cost > 0.0 {
+            let transport_kobo = (transportation_cost * 100.0) as i64;
+            let _ = app_state.db_client
+                .credit_wallet(
+                    order.vendor_id,
+                    transport_kobo,
+                    TransactionType::ServicePayment,
+                    format!("Transportation cost for order {}", order.order_number),
+                    format!("TRANSPORT_{}", order.id),
+                    None,
+                    Some(serde_json::json!({
+                        "order_id": order.id,
+                        "service_id": order.service_id,
+                        "buyer_id": order.buyer_id,
+                        "escrow_id": escrow.id
+                    })),
+                )
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?;
+        }
+        
+        // Update order to paid with escrow
+        let paid_order = app_state.db_client
+            .update_order_status(order.id, "paid".to_string())
+            .await
+            .map_err(|e| HttpError::server_error(e.to_string()))?;
         
         let vendor = app_state.db_client
             .get_vendor_profile_by_id(order.vendor_id)
@@ -1086,7 +1211,7 @@ pub async fn verify_service_purchase(
             .map_err(|e| HttpError::server_error(e.to_string()))?
             .ok_or_else(|| HttpError::not_found("Vendor not found"))?;
         
-        // Notify vendor
+        // Notify vendor about payment and escrow
         let _ = app_state.notification_service
             .notify_new_order(
                 vendor.user_id,
@@ -1096,20 +1221,24 @@ pub async fn verify_service_purchase(
             )
             .await;
         
-        // Notify buyer
+        // Notify buyer about payment confirmation
         let _ = app_state.notification_service
-            .notify_order_placed(
+            .notify_order_confirmed(
                 order.buyer_id,
                 &service.title,
-                order.total_amount.to_f64().unwrap_or(0.0),
                 &order.order_number,
             )
             .await;
         
         Ok(Json(serde_json::json!({
             "status": "success",
-            "message": "Payment verified and order updated",
-            "data": paid_order
+            "message": "Payment verified and escrow funded. Transportation cost released to vendor.",
+            "data": {
+                "order": paid_order,
+                "escrow": funded_escrow,
+                "transportation_cost": transportation_cost,
+                "escrow_amount": escrow.amount
+            }
         })))
     } else {
         Ok(Json(serde_json::json!({
@@ -1235,59 +1364,123 @@ pub async fn complete_order(
     Extension(auth): Extension<JWTAuthMiddeware>,
     Path(order_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, HttpError> {
-    let order = app_state.db_client
-        .get_order_by_id(order_id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?
-        .ok_or_else(|| HttpError::not_found("Order not found"))?;
+    // Start database transaction for atomic order completion
+    let mut tx = app_state.db_client.pool.begin().await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Get order with row-level lock to prevent race conditions
+    let order = sqlx::query_as::<_, ServiceOrder>(
+        "SELECT * FROM service_orders WHERE id = $1 FOR UPDATE"
+    )
+    .bind(order_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?
+    .ok_or_else(|| HttpError::not_found("Order not found"))?;
     
     // Only buyer can mark as complete
     if order.buyer_id != auth.user.id {
         return Err(HttpError::unauthorized("Only buyer can complete order"));
     }
     
-    if order.status != Some(OrderStatus::Completed) && order.status != Some(OrderStatus::Processing) {
-        return Err(HttpError::bad_request("Order must be confirmed first"));
+    if order.status != Some(OrderStatus::Confirmed) {
+        return Err(HttpError::bad_request("Order must be confirmed before completion"));
     }
     
-    let completed_order = app_state.db_client
-        .update_order_status(order_id, "completed".to_string())
+    // Get escrow details if available
+    let escrow_release_amount = if let Some(escrow_id) = order.escrow_id {
+        let escrow = sqlx::query_as::<_, crate::models::labourmodel::EscrowTransaction>(
+            "SELECT id, job_id, employer_id, worker_id, amount, platform_fee, status, transaction_hash, created_at, released_at FROM escrow_transactions WHERE id = $1"
+        )
+        .bind(escrow_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
+        .ok_or_else(|| HttpError::not_found("Escrow transaction not found"))?;
+        
+        if escrow.status != Some(crate::models::labourmodel::PaymentStatus::Funded) {
+            return Err(HttpError::bad_request("Escrow is not funded yet"));
+        }
+        
+        // Calculate escrow release amount (escrow amount - platform fee)
+        let platform_fee = escrow.amount.to_f64().unwrap_or(0.0) * 0.05; // 5% platform fee
+        escrow.amount.to_f64().unwrap_or(0.0) - platform_fee
+    } else {
+        // Fallback to vendor_amount if no escrow
+        order.vendor_amount.to_f64().unwrap_or(0.0)
+    };
+    
+    // Update order status to completed within transaction
+    let completed_order = sqlx::query_as::<_, ServiceOrder>(
+        "UPDATE service_orders SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *"
+    )
+    .bind(order_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| HttpError::server_error(e.to_string()))?;
+    
+    // Release escrow to vendor if applicable
+    if let Some(escrow_id) = order.escrow_id {
+        // Update escrow status to completed
+        sqlx::query(
+            "UPDATE escrow_transactions SET status = $2, released_at = NOW() WHERE id = $1"
+        )
+        .bind(escrow_id)
+        .bind(PaymentStatus::Completed)
+        .execute(&mut *tx)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
+    }
     
-    // Pay vendor (transfer from escrow to vendor wallet)
-    let vendor_amount_kobo = (order.vendor_amount.to_f64().unwrap_or(0.0) * 100.0) as i64;
+    // Commit the transaction
+    tx.commit().await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
     
+    // Credit vendor wallet with escrow release amount (outside transaction for performance)
     let vendor = app_state.db_client
         .get_vendor_profile_by_id(order.vendor_id)
-        .await?
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("Vendor not found"))?;
+    
+    let vendor_amount_kobo = (escrow_release_amount * 100.0) as i64;
     
     let _ = app_state.db_client
         .credit_wallet(
             vendor.user_id,
             vendor_amount_kobo,
             TransactionType::ServicePayment,
-            format!("Sale: Order {}", order.order_number),
-            format!("VENDOR_PAY_{}", order.id),
+            format!("Escrow release: Order {}", order.order_number),
+            format!("ESCROW_RELEASE_{}", order.id),
             None,
-            Some(serde_json::json!({"order_id": order.id})),
+            Some(serde_json::json!({
+                "order_id": order.id,
+                "service_id": order.service_id,
+                "buyer_id": order.buyer_id,
+                "escrow_id": order.escrow_id
+            })),
         )
-        .await?;
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
     
     // Notify vendor of payment
     let service = app_state.db_client.get_service(order.service_id)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?
         .ok_or_else(|| HttpError::not_found("Service not found"))?;
+    
     let _ = app_state.notification_service
-        .notify_order_completed(vendor.user_id, &service.title, order.vendor_amount.to_f64().unwrap_or(0.0))
+        .notify_order_completed(vendor.user_id, &service.title, escrow_release_amount)
         .await;
     
     Ok(Json(serde_json::json!({
         "status": "success",
-        "message": "Order completed and vendor paid",
-        "data": completed_order
+        "message": "Order completed and escrow released to vendor",
+        "data": {
+            "order": completed_order,
+            "escrow_release_amount": escrow_release_amount,
+            "payment_method": "escrow"
+        }
     })))
 }
 

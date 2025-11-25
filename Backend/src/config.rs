@@ -17,6 +17,11 @@ pub struct Config {
     pub smtp_host: String,
     pub smtp_username: String,
     pub smtp_password: String,
+    pub smtp_port: u16,
+    pub resend_api_key: String,
+    pub from_email: String,
+    pub email_rate_limit: usize,
+    pub email_rate_window_minutes: i64,
 }
 
 impl Config {
@@ -45,6 +50,22 @@ impl Config {
             .unwrap_or_else(|_| "".to_string());
         let smtp_password = std::env::var("SMTP_PASSWORD")
             .unwrap_or_else(|_| "".to_string());
+        let smtp_port: u16 = std::env::var("SMTP_PORT")
+            .unwrap_or_else(|_| "587".to_string())
+            .parse()
+            .unwrap_or(587);
+        let resend_api_key = std::env::var("RESEND_API_KEY")
+            .unwrap_or_else(|_| "".to_string());
+        let from_email = std::env::var("FROM_EMAIL")
+            .unwrap_or_else(|_| "Verinest <noreply@verinest.xyz>".to_string());
+        let email_rate_limit: usize = std::env::var("EMAIL_RATE_LIMIT")
+            .unwrap_or_else(|_| "10".to_string())
+            .parse()
+            .unwrap_or(10);
+        let email_rate_window_minutes: i64 = std::env::var("EMAIL_RATE_WINDOW_MINUTES")
+            .unwrap_or_else(|_| "1".to_string())
+            .parse()
+            .unwrap_or(1);
 
         if redis_enabled {
             println!("🚀 Redis caching is ENABLED");
@@ -66,6 +87,11 @@ impl Config {
             smtp_host,
             smtp_username,
             smtp_password,
+            smtp_port,
+            resend_api_key,
+            from_email,
+            email_rate_limit,
+            email_rate_window_minutes,
         }
     }
 }

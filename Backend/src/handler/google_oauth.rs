@@ -235,7 +235,7 @@ pub async fn google_login(
     let google_oauth = GoogleAuthService::new()
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let redirect_url = format!("https://verinest.up.railway.app/api/oauth/google/callback");
+    let redirect_url = format!("https://api.verinest.xyz/api/oauth/google/callback");
     println!("📋 Redirect URL: {}", redirect_url);
 
     let state = CsrfToken::new_random();
@@ -286,7 +286,7 @@ pub async fn google_callback(
     // Remove the cookie after use
     let jar = jar.remove(Cookie::build("oauth_state"));
 
-    let redirect_url = "https://verinest.up.railway.app/api/oauth/google/callback".to_string();
+    let redirect_url = "https://api.verinest.xyz/api/oauth/google/callback".to_string();
 
     // Exchange code for access token
     println!("🔄 Exchanging code for tokens...");

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Withdrawal Processed</title>
+    <title>One-Time Password</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -23,7 +23,7 @@
             overflow: hidden;
         }
         .header {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
             color: white;
             padding: 30px;
             text-align: center;
@@ -45,21 +45,17 @@
             color: #555555;
             margin-bottom: 16px;
         }
-        .withdrawal-amount {
-            color: #ef4444;
+        .otp-code {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            font-size: 32px;
             font-weight: 700;
-            font-size: 24px;
-            text-align: center;
-            margin: 20px 0;
-        }
-        .withdrawal-details {
-            background-color: #f8f9fa;
-            border-radius: 8px;
             padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            letter-spacing: 8px;
             margin: 20px 0;
-        }
-        .withdrawal-details p {
-            margin: 8px 0;
+            box-shadow: 0 4px 6px rgba(245, 158, 11, 0.3);
         }
         .footer {
             background-color: #f8f9fa;
@@ -77,27 +73,32 @@
             border-top: 1px solid #e9ecef;
             margin: 25px 0;
         }
+        .warning {
+            background-color: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            color: #92400e;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>Withdrawal Processed</h1>
+            <h1>One-Time Password</h1>
         </div>
         <div class="content">
-            <p>Hello, <strong>{{username}}</strong>!</p>
-            <p>Your withdrawal request has been processed successfully.</p>
-            
-            <div class="withdrawal-details">
-                <p><strong>Withdrawal Amount:</strong></p>
-                <div class="withdrawal-amount">₦{{amount}}</div>
-                <p><strong>Reference:</strong> {{reference}}</p>
+            <p>Hello,</p>
+            <p>Your One-Time Password (OTP) is:</p>
+            <div class="otp-code">{{otp_code}}</div>
+            <p>This code will expire in 10 minutes. Please do not share this code with anyone.</p>
+            <div class="warning">
+                ⚠️ If you didn't request this OTP, please contact support immediately.
             </div>
-            
-            <p>The funds have been sent to your designated payment method. Processing time may vary depending on your bank or payment provider.</p>
-            <p>You can view your transaction history and withdrawal status in your dashboard.</p>
             <div class="divider"></div>
-            <p style="color: #777777; font-size: 14px;">If you didn't request this withdrawal, please contact support immediately.</p>
+            <p style="color: #777777; font-size: 14px;">If you have questions, reach out to support.</p>
         </div>
         <div class="footer">
             <p>Best regards,<br>The Verinest Team</p>

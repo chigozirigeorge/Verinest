@@ -233,6 +233,7 @@ impl Default for JobStatus {
 pub enum PaymentStatus {
     Pending,
     Escrowed,
+    Funded,
     PartiallyPaid,
     Completed,
     Refunded,
@@ -243,6 +244,7 @@ impl PaymentStatus {
         match self {
             PaymentStatus::Pending => "pending",
             PaymentStatus::Escrowed => "escrowed",
+            PaymentStatus::Funded => "funded",
             PaymentStatus::PartiallyPaid => "partially_paid",
             PaymentStatus::Completed => "completed",
             PaymentStatus::Refunded => "refunded",
@@ -253,6 +255,7 @@ impl PaymentStatus {
         match s {
             "pending" => Some(PaymentStatus::Pending),
             "escrowed" => Some(PaymentStatus::Escrowed),
+            "funded" => Some(PaymentStatus::Funded),
             "partially_paid" => Some(PaymentStatus::PartiallyPaid),
             "completed" => Some(PaymentStatus::Completed),
             "refunded" => Some(PaymentStatus::Refunded),

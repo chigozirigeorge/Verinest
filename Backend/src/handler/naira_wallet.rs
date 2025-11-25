@@ -26,11 +26,12 @@ use crate::{
     dtos::naira_walletdtos::*,
     error::HttpError,
     middleware::{
-        main_middleware::{JWTAuthMiddeware},
+        main_middleware::JWTAuthMiddeware,
         rate_limit::{rate_limit_middleware, wallet_rate_limiter, deposit_rate_limiter, webhook_rate_limiter}
     },
     models::{walletmodels::*, verificationmodels::OtpPurpose, usermodel::User},
     service::payment_provider::PaymentProviderService,
+    service::notification_service::NotificationService,
     mail::mails,
     AppState,
 };
@@ -382,6 +383,21 @@ pub async fn verify_deposit(
             .await
             .map_err(|e| HttpError::server_error(e.to_string()))?;
 
+        // Send notification and email for successful deposit
+        let notification_service = NotificationService::new(app_state.db_client.clone());
+        let amount_naira = verification.amount as f64 / 100.0;
+        let user_id = auth.user.id;
+        let reference_clone = reference.to_string();
+        
+        tokio::spawn(async move {
+            let _ = notification_service.notify_wallet_transaction(
+                user_id,
+                "deposit",
+                amount_naira,
+                &reference_clone,
+            ).await;
+        });
+
         let response: TransactionResponseDto = transaction.into();
         Ok(Json(WalletApiResponse::success(
             "Deposit successful",
@@ -530,12 +546,27 @@ pub async fn withdraw_funds(
             total_deduction,
             TransactionType::Withdrawal,
             body.description,
-            reference,
+            reference.clone(),
             Some(transfer_result.reference),
             Some(metadata),
         )
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Send notification for withdrawal
+    let notification_service = NotificationService::new(app_state.db_client.clone());
+    let amount_naira = body.amount;
+    let user_id = auth.user.id;
+    let reference_clone = reference.to_string();
+    
+    tokio::spawn(async move {
+        let _ = notification_service.notify_wallet_transaction(
+            user_id,
+            "withdrawal",
+            amount_naira,
+            &reference_clone,
+        ).await;
+    });
 
     let response: TransactionResponseDto = transaction.into();
     let resp = (StatusCode::OK, Json(WalletApiResponse::<TransactionResponseDto>::success(
@@ -590,10 +621,35 @@ pub async fn transfer_funds(
             recipient.id,
             amount_kobo,
             body.description,
-            reference,
+            reference.clone(),
         )
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
+
+    // Send notifications for both sender and recipient
+    let notification_service = NotificationService::new(app_state.db_client.clone());
+    let amount_naira = body.amount;
+    let sender_id = auth.user.id;
+    let recipient_id = recipient.id;
+    let reference_clone = reference.to_string();
+    
+    tokio::spawn(async move {
+        // Send notification to sender
+        let _ = notification_service.notify_wallet_transaction(
+            sender_id,
+            "transfer_sent",
+            amount_naira,
+            &reference_clone,
+        ).await;
+        
+        // Send notification to recipient
+        let _ = notification_service.notify_wallet_transaction(
+            recipient_id,
+            "transfer_received",
+            amount_naira,
+            &reference_clone,
+        ).await;
+    });
 
     let response: TransactionResponseDto = sender_tx.into();
     Ok(Json(WalletApiResponse::success(

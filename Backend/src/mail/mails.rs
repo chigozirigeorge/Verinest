@@ -1,5 +1,5 @@
 //11
-use super::sendmail::send_email;
+use super::secure_sendmail::send_email;
 use crate::{models::{
     verificationmodels::OtpPurpose,
     usermodel::VerificationStatus
@@ -14,8 +14,8 @@ pub async fn send_verification_email(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let subject = "Email Verification";
     let template_path = "src/mail/templates/Verification-email.html";
-    let base_url = "https://verinest.up.railway.app/api/auth/verify";
-    let verification_link = create_verification_link(base_url, token);
+    let base_url = std::env::var("APP_URL").unwrap_or_else(|_| "https://verinest.up.railway.app".to_string());
+    let verification_link = create_verification_link(&base_url, token);
     let placeholders = vec![
         ("{{username}}".to_string(), username.to_string()),
         ("{{verification_link}}".to_string(), verification_link)
@@ -25,7 +25,8 @@ pub async fn send_verification_email(
 }
 
 fn create_verification_link(base_url: &str, token: &str) -> String {
-    format!("{}?token={}", base_url, token)
+    let api_path = std::env::var("API_VERIFICATION_PATH").unwrap_or_else(|_| "/api/auth/verify".to_string());
+    format!("{}{}?token={}", base_url, api_path, token)
 }
 
 pub async fn send_welcome_email(

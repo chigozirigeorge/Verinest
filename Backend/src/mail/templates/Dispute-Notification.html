@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Withdrawal Processed</title>
+    <title>Dispute Notification</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -23,7 +23,7 @@
             overflow: hidden;
         }
         .header {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
             color: white;
             padding: 30px;
             text-align: center;
@@ -45,21 +45,30 @@
             color: #555555;
             margin-bottom: 16px;
         }
-        .withdrawal-amount {
-            color: #ef4444;
-            font-weight: 700;
-            font-size: 24px;
-            text-align: center;
-            margin: 20px 0;
-        }
-        .withdrawal-details {
-            background-color: #f8f9fa;
+        .dispute-details {
+            background-color: #fef3c7;
+            border: 1px solid #f59e0b;
             border-radius: 8px;
             padding: 20px;
             margin: 20px 0;
         }
-        .withdrawal-details p {
+        .dispute-details p {
             margin: 8px 0;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            margin: 20px 0;
+            transition: all 0.3s ease;
+        }
+        .btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
         }
         .footer {
             background-color: #f8f9fa;
@@ -77,27 +86,43 @@
             border-top: 1px solid #e9ecef;
             margin: 25px 0;
         }
+        .warning {
+            background-color: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            color: #92400e;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>Withdrawal Processed</h1>
+            <h1>Dispute Notification</h1>
         </div>
         <div class="content">
             <p>Hello, <strong>{{username}}</strong>!</p>
-            <p>Your withdrawal request has been processed successfully.</p>
+            <p>A dispute has been raised regarding your job:</p>
             
-            <div class="withdrawal-details">
-                <p><strong>Withdrawal Amount:</strong></p>
-                <div class="withdrawal-amount">₦{{amount}}</div>
-                <p><strong>Reference:</strong> {{reference}}</p>
+            <div class="dispute-details">
+                <p><strong>Job:</strong> {{job_title}}</p>
+                <p><strong>Dispute Type:</strong> {{dispute_type}}</p>
+                <p><strong>Description:</strong> {{dispute_description}}</p>
+                <p><strong>Raised by:</strong> {{raised_by}}</p>
+                <p><strong>Date:</strong> {{dispute_date}}</p>
             </div>
             
-            <p>The funds have been sent to your designated payment method. Processing time may vary depending on your bank or payment provider.</p>
-            <p>You can view your transaction history and withdrawal status in your dashboard.</p>
+            <p>Please review the dispute details and respond through your dashboard. We recommend addressing this matter promptly to ensure a fair resolution.</p>
+            <a href="{{dashboard_url}}" class="btn">View Dispute</a>
+            
+            <div class="warning">
+                ⚠️ This dispute requires your attention within 48 hours. Failure to respond may result in administrative action.
+            </div>
+            
             <div class="divider"></div>
-            <p style="color: #777777; font-size: 14px;">If you didn't request this withdrawal, please contact support immediately.</p>
+            <p style="color: #777777; font-size: 14px;">If you need assistance, please contact our support team.</p>
         </div>
         <div class="footer">
             <p>Best regards,<br>The Verinest Team</p>

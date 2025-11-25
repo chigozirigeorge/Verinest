@@ -234,7 +234,7 @@ pub async fn verify_email(
         cookie.to_string().parse().unwrap() 
     );
 
-    let frontend_url = format!("https://verinest-project.vercel.app/login");
+    let frontend_url = format!("https://verinest.xyz/login");
 
     let redirect = Redirect::to(&frontend_url);
 
@@ -269,7 +269,7 @@ pub async fn forgot_password(
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    let reset_link = format!("https://verinest-project.vercel.app/reset-password?token={}", &verification_token);
+    let reset_link = format!("https://verinest.xyz/reset-password?token={}", &verification_token);
 
     let email_sent = send_forgot_password_email(&user.email, &reset_link, &user.username).await;
 
