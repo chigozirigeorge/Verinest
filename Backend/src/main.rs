@@ -110,6 +110,8 @@ async fn main() {
 
     let config = Config::init();
 
+    println!("REDIS_URL from env: {:?}", std::env::var("REDIS_URL"));
+
     // Connect to PostgreSQL
     let pool = match PgPoolOptions::new()
             .max_connections(20)
