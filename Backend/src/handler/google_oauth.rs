@@ -230,37 +230,34 @@ pub async fn google_login(
     Extension(app_state): Extension<Arc<AppState>>,
     jar: CookieJar,
 ) -> Result<(CookieJar, impl IntoResponse), HttpError> {
-    println!("=== GOOGLE LOGIN STARTED ===");
+    eprintln!("=== GOOGLE LOGIN STARTED ===");
     
     let google_oauth = GoogleAuthService::new()
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     let redirect_url = format!("https://api.verinest.xyz/api/oauth/google/callback");
-    println!("📋 Redirect URL: {}", redirect_url);
+    eprintln!("📋 Redirect URL: {}", redirect_url);
 
     let state = CsrfToken::new_random();
     let state_secret = state.secret().to_string();
-    println!("🔑 Generated state: {}", state_secret);
+    eprintln!("🔑 Generated state: {}", state_secret);
 
-    // Store state in memory as fallback
+    // Store state in memory as fallback (this is now primary)
+    eprintln!("💾 Storing state in memory...");
     google_oauth.store_csrf_state(state_secret.clone()).await;
 
-    let cookie = Cookie::build(("oauth_state", state_secret.clone()))
-        .path("/")
-        .max_age(Duration::days(2))
-        .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
-        .secure(false)  // Set to false for testing, change to true in production
-        .build();
+    // For cross-domain setups, we rely on memory storage instead of cookies
+    // The state will be validated against memory storage in the callback
 
     // Force account selection by adding prompt=select_account
     let mut auth_url = google_oauth.get_authorization_url(&redirect_url, &state_secret);
     auth_url.push_str("&prompt=select_account");
     
-    println!("🌐 Generated auth URL: {}", auth_url);
+    eprintln!("🌐 Generated auth URL: {}", auth_url);
+    eprintln!("🔑 State stored in memory: {}", state_secret);
 
-    println!("=== REDIRECTING TO GOOGLE ===");
-    Ok((jar.add(cookie), Redirect::to(&auth_url)))
+    eprintln!("=== REDIRECTING TO GOOGLE ===");
+    Ok((jar, Redirect::to(&auth_url)))  // Don't set cookie for cross-domain
 }
 
 
@@ -269,36 +266,36 @@ pub async fn google_callback(
     jar: CookieJar,
     Query(query): Query<GoogleAuthQuery>,
 ) -> Result<impl IntoResponse, HttpError> {
-    println!("=== GOOGLE CALLBACK STARTED ===");
-    println!("🔍 Debugging - Available cookies:");
-    for cookie in jar.iter() {
-        println!("   Cookie: {} = {}", cookie.name(), cookie.value());
-    }
+    eprintln!("=== GOOGLE CALLBACK STARTED ===");
+    eprintln!("🔍 Query params: state={:?}, code={:?}", query.state, query.code);
     
     let google_auth = GoogleAuthService::new()
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // Try to get state from cookie first, then fallback to memory storage
-    let stored_state = if let Some(cookie) = jar.get("oauth_state") {
-        println!("✅ Found oauth_state cookie: {}", cookie.value());
-        cookie.value().to_string()
-    } else {
-        println!("❌ Cookie not found, checking memory storage...");
-        // Fallback: check if state parameter matches any stored state
-        if let Some(state) = &query.state {
-            match google_auth.validate_csrf_state(state).await {
-                Ok(_) => {
-                    println!("✅ Found state in memory storage");
-                    state.clone()
-                }
-                Err(e) => {
-                    println!("❌ State not found in memory: {}", e);
+    // For cross-domain setups, we primarily use memory storage
+    // Cookie is just a fallback for same-domain setups
+    let stored_state = if let Some(state) = &query.state {
+        eprintln!("🔍 Checking memory for state: {}", state);
+        match google_auth.validate_csrf_state(state).await {
+            Ok(_) => {
+                eprintln!("✅ Found state in memory storage");
+                state.clone()
+            }
+            Err(e) => {
+                eprintln!("❌ State not found in memory: {}, checking cookie as fallback", e);
+                // Fallback to cookie if memory fails
+                if let Some(cookie) = jar.get("oauth_state") {
+                    eprintln!("✅ Found oauth_state cookie: {}", cookie.value());
+                    cookie.value().to_string()
+                } else {
+                    eprintln!("❌ No cookie found either");
                     return Err(HttpError::unauthorized("Missing CSRF state cookie".to_string()));
                 }
             }
-        } else {
-            return Err(HttpError::unauthorized("Missing CSRF state parameter".to_string()));
         }
+    } else {
+        eprintln!("❌ No state parameter in query");
+        return Err(HttpError::unauthorized("Missing CSRF state parameter".to_string()));
     };
 
     // Validate CSRF state
