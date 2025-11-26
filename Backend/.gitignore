@@ -10,3 +10,4 @@ marketplace.sql
 marketplace2withtransactionpin.sql
 012_support_tickets.sql
 .sqlx
+/migrations

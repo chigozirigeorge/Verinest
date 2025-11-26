@@ -227,7 +227,7 @@ pub fn oauth_handler() -> Router {
 
 // In your Rust backend - Update the google_login function
 pub async fn google_login(
-    Extension(_app_state): Extension<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     jar: CookieJar,
 ) -> Result<(CookieJar, impl IntoResponse), HttpError> {
     println!("=== GOOGLE LOGIN STARTED ===");
@@ -242,13 +242,15 @@ pub async fn google_login(
     let state_secret = state.secret().to_string();
     println!("🔑 Generated state: {}", state_secret);
 
+    // Store state in memory as fallback
+    google_oauth.store_csrf_state(state_secret.clone()).await;
+
     let cookie = Cookie::build(("oauth_state", state_secret.clone()))
         .path("/")
         .max_age(Duration::days(2))
         .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::None)
-        .secure(true)
-        .domain(".verinest.xyz")
+        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .secure(false)  // Set to false for testing, change to true in production
         .build();
 
     // Force account selection by adding prompt=select_account
@@ -276,16 +278,28 @@ pub async fn google_callback(
     let google_auth = GoogleAuthService::new()
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // Get state from cookie
-    let stored_state = jar.get("oauth_state")
-        .map(|cookie| {
-            println!("✅ Found oauth_state cookie: {}", cookie.value());
-            cookie.value().to_string()
-        })
-        .ok_or_else(|| {
-            println!("❌ Missing oauth_state cookie");
-            HttpError::unauthorized("Missing CSRF state cookie".to_string())
-        })?;
+    // Try to get state from cookie first, then fallback to memory storage
+    let stored_state = if let Some(cookie) = jar.get("oauth_state") {
+        println!("✅ Found oauth_state cookie: {}", cookie.value());
+        cookie.value().to_string()
+    } else {
+        println!("❌ Cookie not found, checking memory storage...");
+        // Fallback: check if state parameter matches any stored state
+        if let Some(state) = &query.state {
+            match google_auth.validate_csrf_state(state).await {
+                Ok(_) => {
+                    println!("✅ Found state in memory storage");
+                    state.clone()
+                }
+                Err(e) => {
+                    println!("❌ State not found in memory: {}", e);
+                    return Err(HttpError::unauthorized("Missing CSRF state cookie".to_string()));
+                }
+            }
+        } else {
+            return Err(HttpError::unauthorized("Missing CSRF state parameter".to_string()));
+        }
+    };
 
     // Validate CSRF state
     if let Some(state) = &query.state {
