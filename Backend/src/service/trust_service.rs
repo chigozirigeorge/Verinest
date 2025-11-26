@@ -416,11 +416,11 @@ pub struct TrustDimensions {
 impl TrustDimensions {
     pub fn calculate_overall(&self) -> f32 {
         // Weighted average of all dimensions
-        (self.completion_rate * 0.3 +
-         self.on_time_delivery * 0.25 +
-         self.quality_of_work * 0.25 +
-         self.communication * 0.1 +
-         self.dispute_resolution * 0.1)
+        self.completion_rate * 0.3
+         + self.on_time_delivery * 0.25
+         + self.quality_of_work * 0.25
+         + self.communication * 0.1
+         + self.dispute_resolution * 0.1
     }
 }
 

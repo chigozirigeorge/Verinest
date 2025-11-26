@@ -9,7 +9,6 @@ use bigdecimal::BigDecimal;
 
 use super::db::DBClient;
 use crate::models::{walletmodels::*, usermodel::User};
-use crate::utils::decimal::BigDecimalHelpers;
 
 #[async_trait]
 pub trait NairaWalletExt {

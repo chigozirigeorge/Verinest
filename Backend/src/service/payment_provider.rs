@@ -6,7 +6,6 @@ use reqwest;
 use crate::{
     models::walletmodels::PaymentMethod,
     config::Config,
-    AppState,
 };
 
 #[derive(Debug, Serialize, Deserialize)]

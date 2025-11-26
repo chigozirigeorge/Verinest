@@ -1,5 +1,5 @@
 // src/db/supportdb.rs
-use sqlx::{Pool, Postgres, Error};
+use sqlx::{Error};
 use uuid::Uuid;
 use async_trait::async_trait;
 

@@ -22,7 +22,6 @@ use crate::{
 };
 use crate::db::cache::CacheHelper;
 use crate::middleware::cache_invalidation::{CacheInvalidationConfig, invalidate_cache_for_request, should_cache_request};
-use axum::body;
 use axum::Json;
 use axum::http::Method;
 use serde_json::Value;

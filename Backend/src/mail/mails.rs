@@ -6,6 +6,20 @@ use crate::{models::{
 }
 };
 
+/// Helper function to find template file path
+fn find_template_path(template_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let template_paths = vec![
+        format!("src/mail/templates/{}", template_name),
+        format!("/app/src/mail/templates/{}", template_name),
+        format!("/home/dave/Code/backend/Backend/src/mail/templates/{}", template_name),
+    ];
+    
+    template_paths.iter()
+        .find(|path| std::path::Path::new(path).exists())
+        .cloned()
+        .ok_or(format!("Template not found: {}", template_name).into())
+}
+
 /// Send verification email with proper error handling
 pub async fn send_verification_email(
     to_email: &str,
@@ -13,15 +27,16 @@ pub async fn send_verification_email(
     token: &str
 ) -> Result<(), Box<dyn std::error::Error>> {
     let subject = "Email Verification";
-    let template_path = "src/mail/templates/Verification-email.html";
-    let base_url = std::env::var("APP_URL").unwrap_or_else(|_| "https://verinest.up.railway.app".to_string());
+    let template_path = find_template_path("Verification-email.html")?;
+    
+    let base_url = std::env::var("APP_URL").unwrap_or_else(|_| "https://verinest.xyz".to_string());
     let verification_link = create_verification_link(&base_url, token);
     let placeholders = vec![
         ("{{username}}".to_string(), username.to_string()),
         ("{{verification_link}}".to_string(), verification_link)
     ];
 
-    send_email(to_email, subject, template_path, &placeholders).await
+    send_email(to_email, subject, &template_path, &placeholders).await
 }
 
 fn create_verification_link(base_url: &str, token: &str) -> String {
@@ -34,12 +49,12 @@ pub async fn send_welcome_email(
     username: &str
 ) -> Result<(), Box<dyn std::error::Error>> {
     let subject = "Welcome to Application";
-    let template_path = "src/mail/templates/Welcome-email.html";
+    let template_path = find_template_path("Welcome-email.html")?;
     let placeholders = vec![
         ("{{username}}".to_string(), username.to_string())
     ];
 
-    send_email(to_email, subject, template_path, &placeholders).await
+    send_email(to_email, subject, &template_path, &placeholders).await
 }
 
 pub async fn send_forgot_password_email(
@@ -48,13 +63,13 @@ pub async fn send_forgot_password_email(
     username: &str
 ) -> Result<(), Box<dyn std::error::Error>> {
     let subject = "Rest your Password";
-    let template_path = "src/mail/templates/RestPassword-email.html";
+    let template_path = find_template_path("RestPassword-email.html")?;
     let placeholders = vec![
         ("{{username}}".to_string(), username.to_string()),
         ("{{rest_link}}".to_string(), rest_link.to_string())
     ];
 
-    send_email(to_email, subject, template_path, &placeholders).await
+    send_email(to_email, subject, &template_path, &placeholders).await
 }
 
 pub async fn send_otp_email(
@@ -65,18 +80,17 @@ pub async fn send_otp_email(
     let subject = match purpose {
         OtpPurpose::AccountVerification => "Account Verification OTP",
         OtpPurpose::PasswordReset => "Password Reset OTP",
-        OtpPurpose::Transaction => "Transaction Verification OTP",
+        OtpPurpose::Transaction => "Transaction OTP",
         OtpPurpose::VerificationUpdate => "Verification Update OTP",
-        OtpPurpose::SensitiveAction => "Security Verification OTP",
+        OtpPurpose::SensitiveAction => "Sensitive Action OTP",
     };
-
-    let template_path = "src/mail/templates/OTP-email.html";
+    let template_path = find_template_path("OTP-email.html")?;
     let placeholders = vec![
         ("{{otp_code}}".to_string(), otp_code.to_string()),
         ("{{purpose}}".to_string(), format!("{:?}", purpose)),
     ];
 
-    send_email(to_email, subject, template_path, &placeholders).await
+    send_email(to_email, subject, &template_path, &placeholders).await
 }
 
 // In mails.rs - Add this function
