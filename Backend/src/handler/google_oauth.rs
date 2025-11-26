@@ -259,6 +259,7 @@ pub fn oauth_handler() -> Router {
         .route("/google/callback", get(google_callback))
         .route("/test-url", get(test_url_generation))
         .route("/test-jwt", get(test_jwt_state))
+        .route("/test-simple", get(test_simple))
 }
 
 // Test endpoint to verify JWT state functions work
@@ -288,6 +289,16 @@ pub async fn test_jwt_state() -> Result<impl IntoResponse, HttpError> {
         eprintln!("❌ JWT state test FAILED!");
         Err(HttpError::server_error("JWT state validation failed"))
     }
+}
+
+// Simple test endpoint to verify basic functionality
+pub async fn test_simple() -> Result<impl IntoResponse, HttpError> {
+    eprintln!("🧪 Simple test endpoint called");
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "message": "OAuth handler is working",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    })))
 }
 
 // In your Rust backend - Update the google_login function
@@ -330,30 +341,46 @@ pub async fn google_callback(
     eprintln!("=== GOOGLE CALLBACK STARTED ===");
     eprintln!("🔍 Query params: state={:?}, code={:?}", query.state, query.code);
     
+    eprintln!("🔄 About to initialize GoogleAuthService...");
     let google_auth = GoogleAuthService::new()
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
+        .map_err(|e| {
+            eprintln!("❌ GoogleAuthService initialization failed: {}", e);
+            HttpError::server_error(e.to_string())
+        })?;
+    eprintln!("✅ GoogleAuthService initialized successfully");
 
-    // TEMPORARY: Skip state validation for testing
     eprintln!("⚠️  SKIPPING STATE VALIDATION FOR TESTING");
     
+    eprintln!("🔄 About to exchange code for tokens...");
     let redirect_url = "https://api.verinest.xyz/api/oauth/google/callback".to_string();
 
     // Exchange code for access token
-    eprintln!("🔄 Exchanging code for tokens...");
     let (access_token, id_token) = google_auth.exchange_code(&query.code, &redirect_url)
         .await
-        .map_err(|e| HttpError::unauthorized(e.to_string()))?;
+        .map_err(|e| {
+            eprintln!("❌ Token exchange failed: {}", e);
+            HttpError::unauthorized(e.to_string())
+        })?;
+    eprintln!("✅ Token exchange successful");
 
     // Get user info from Google
+    eprintln!("🔄 About to get user info...");
     let user_info = if let Some(id_token) = id_token {
         google_auth.validate_id_token(&id_token)
             .await
-            .map_err(|e| HttpError::unauthorized(e.to_string()))?
+            .map_err(|e| {
+                eprintln!("❌ ID token validation failed: {}", e);
+                HttpError::unauthorized(e.to_string())
+            })?
     } else {
         google_auth.get_user_info_via_access_token(&access_token)
             .await
-            .map_err(|e| HttpError::unauthorized(e.to_string()))?
+            .map_err(|e| {
+                eprintln!("❌ User info fetch failed: {}", e);
+                HttpError::unauthorized(e.to_string())
+            })?
     };
+    eprintln!("✅ User info retrieved: {}", user_info.email);
 
     // Check if user already exists by Google ID
     let existing_user_by_google = app_state.db_client
