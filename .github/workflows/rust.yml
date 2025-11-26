@@ -1,0 +1,49 @@
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ec2-backend
+
+    steps:
+      # 1️⃣ Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2️⃣ Install Rust
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      # 3️⃣ Build release
+      - name: Build release
+        working-directory: ./Backend
+        run: cargo build --release
+
+      # 4️⃣ Copy binary to EC2
+      - name: Upload binary to EC2
+        uses: appleboy/scp-action@v0.1.5
+        with:
+          host: ${{ secrets.EC2_HOST }}         
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}            
+          port: 22
+          source: Backend/target/release/verinest
+          target: /opt/verinest-backend/
+
+      # 5️⃣ Restart backend via systemd
+      - name: Restart Rust backend
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            sudo systemctl daemon-reload
+            sudo systemctl restart verinest-backend

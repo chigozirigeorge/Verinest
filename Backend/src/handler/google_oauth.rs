@@ -246,7 +246,9 @@ pub async fn google_login(
         .path("/")
         .max_age(Duration::days(2))
         .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .same_site(axum_extra::extract::cookie::SameSite::None)
+        .secure(true)
+        .domain("verinest.xyz")
         .build();
 
     // Force account selection by adding prompt=select_account
@@ -266,13 +268,24 @@ pub async fn google_callback(
     Query(query): Query<GoogleAuthQuery>,
 ) -> Result<impl IntoResponse, HttpError> {
     println!("=== GOOGLE CALLBACK STARTED ===");
+    println!("🔍 Debugging - Available cookies:");
+    for cookie in jar.iter() {
+        println!("   Cookie: {} = {}", cookie.name(), cookie.value());
+    }
+    
     let google_auth = GoogleAuthService::new()
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     // Get state from cookie
     let stored_state = jar.get("oauth_state")
-        .map(|cookie| cookie.value().to_string())
-        .ok_or_else(|| HttpError::unauthorized("Missing CSRF state cookie".to_string()))?;
+        .map(|cookie| {
+            println!("✅ Found oauth_state cookie: {}", cookie.value());
+            cookie.value().to_string()
+        })
+        .ok_or_else(|| {
+            println!("❌ Missing oauth_state cookie");
+            HttpError::unauthorized("Missing CSRF state cookie".to_string())
+        })?;
 
     // Validate CSRF state
     if let Some(state) = &query.state {
