@@ -248,7 +248,7 @@ pub async fn google_login(
         .http_only(true)
         .same_site(axum_extra::extract::cookie::SameSite::None)
         .secure(true)
-        .domain("verinest.xyz")
+        .domain(".verinest.xyz")
         .build();
 
     // Force account selection by adding prompt=select_account
