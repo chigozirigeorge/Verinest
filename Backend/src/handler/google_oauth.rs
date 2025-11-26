@@ -200,9 +200,11 @@
 use axum::{extract::Query, response::{IntoResponse, Redirect}, routing::get, Extension, Json, Router};
 use time::Duration;
 use std::sync::Arc;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use oauth2::CsrfToken;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
+use jsonwebtoken::{encode, decode, Header, Validation, EncodingKey, DecodingKey};
+use serde_json::Value;
 
 use crate::{
     db::userdb::UserExt, 
@@ -212,10 +214,42 @@ use crate::{
     utils::token, AppState
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct GoogleAuthQuery {
     pub code: String,
     pub state: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OAuthStateClaims {
+    state: String,
+    exp: i64, // expiration time
+    iat: i64, // issued at
+}
+
+// Helper function to create a self-contained state token
+fn create_state_token(state: &str) -> Result<String, HttpError> {
+    let now = chrono::Utc::now();
+    let claims = OAuthStateClaims {
+        state: state.to_string(),
+        exp: (now + chrono::Duration::minutes(5)).timestamp(), // 5 minutes expiration
+        iat: now.timestamp(),
+    };
+
+    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "default-secret".to_string());
+    
+    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref()))
+        .map_err(|e| HttpError::server_error(format!("Failed to create state token: {}", e)))
+}
+
+// Helper function to validate state token
+fn validate_state_token(token: &str) -> Result<String, HttpError> {
+    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "default-secret".to_string());
+    let validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+    
+    decode::<OAuthStateClaims>(token, &DecodingKey::from_secret(secret.as_ref()), &validation)
+        .map(|data| data.claims.state)
+        .map_err(|e| HttpError::unauthorized(format!("Invalid state token: {}", e)))
 }
 
 pub fn oauth_handler() -> Router {
@@ -242,22 +276,18 @@ pub async fn google_login(
     let state_secret = state.secret().to_string();
     eprintln!("🔑 Generated state: {}", state_secret);
 
-    // Store state in memory as fallback (this is now primary)
-    eprintln!("💾 Storing state in memory...");
-    google_oauth.store_csrf_state(state_secret.clone()).await;
-
-    // For cross-domain setups, we rely on memory storage instead of cookies
-    // The state will be validated against memory storage in the callback
+    // Create JWT-based state token (self-contained, no server memory needed)
+    let state_token = create_state_token(&state_secret)?;
+    eprintln!("🔐 Created state token: {}", state_token);
 
     // Force account selection by adding prompt=select_account
-    let mut auth_url = google_oauth.get_authorization_url(&redirect_url, &state_secret);
+    let mut auth_url = google_oauth.get_authorization_url(&redirect_url, &state_token);
     auth_url.push_str("&prompt=select_account");
     
     eprintln!("🌐 Generated auth URL: {}", auth_url);
-    eprintln!("🔑 State stored in memory: {}", state_secret);
 
     eprintln!("=== REDIRECTING TO GOOGLE ===");
-    Ok((jar, Redirect::to(&auth_url)))  // Don't set cookie for cross-domain
+    Ok((jar, Redirect::to(&auth_url)))
 }
 
 
@@ -272,25 +302,17 @@ pub async fn google_callback(
     let google_auth = GoogleAuthService::new()
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
-    // For cross-domain setups, we primarily use memory storage
-    // Cookie is just a fallback for same-domain setups
-    let stored_state = if let Some(state) = &query.state {
-        eprintln!("🔍 Checking memory for state: {}", state);
-        match google_auth.validate_csrf_state(state).await {
-            Ok(_) => {
-                eprintln!("✅ Found state in memory storage");
-                state.clone()
+    // Validate the JWT-based state token
+    let stored_state = if let Some(state_token) = &query.state {
+        eprintln!("🔍 Validating state token: {}", state_token);
+        match validate_state_token(state_token) {
+            Ok(state) => {
+                eprintln!("✅ State token validated successfully: {}", state);
+                state
             }
             Err(e) => {
-                eprintln!("❌ State not found in memory: {}, checking cookie as fallback", e);
-                // Fallback to cookie if memory fails
-                if let Some(cookie) = jar.get("oauth_state") {
-                    eprintln!("✅ Found oauth_state cookie: {}", cookie.value());
-                    cookie.value().to_string()
-                } else {
-                    eprintln!("❌ No cookie found either");
-                    return Err(HttpError::unauthorized("Missing CSRF state cookie".to_string()));
-                }
+                eprintln!("❌ State token validation failed: {}", e);
+                return Err(e);
             }
         }
     } else {
@@ -298,22 +320,12 @@ pub async fn google_callback(
         return Err(HttpError::unauthorized("Missing CSRF state parameter".to_string()));
     };
 
-    // Validate CSRF state
-    if let Some(state) = &query.state {
-        if state != &stored_state {
-            return Err(HttpError::unauthorized("Invalid CSRF token".to_string()));
-        }
-    } else {
-        return Err(HttpError::unauthorized("Missing CSRF state parameter".to_string()));
-    }
-
-    // Remove the cookie after use
-    let jar = jar.remove(Cookie::build("oauth_state"));
+    eprintln!("🔑 Using validated state: {}", stored_state);
 
     let redirect_url = "https://api.verinest.xyz/api/oauth/google/callback".to_string();
 
     // Exchange code for access token
-    println!("🔄 Exchanging code for tokens...");
+    eprintln!("🔄 Exchanging code for tokens...");
     let (access_token, id_token) = google_auth.exchange_code(&query.code, &redirect_url)
         .await
         .map_err(|e| HttpError::unauthorized(e.to_string()))?;
@@ -336,7 +348,7 @@ pub async fn google_callback(
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
     let user = if let Some(user) = existing_user_by_google {
-        println!("Existing user found - logging in: {}", user.email);
+        eprintln!("Existing user found - logging in: {}", user.email);
         user
     } else {
         // Check if user exists by email
@@ -346,13 +358,13 @@ pub async fn google_callback(
             .map_err(|e| HttpError::server_error(e.to_string()))?;
 
         if let Some(user) = existing_user_by_email {
-            println!("🔗 Linking existing email account to Google: {}", user.email);
+            eprintln!("🔗 Linking existing email account to Google: {}", user.email);
             app_state.db_client
                 .link_google_account(user.id, &user_info.sub, user_info.picture.as_deref())
                 .await
                 .map_err(|e| HttpError::server_error(e.to_string()))?
         } else {
-            println!("Creating new verified user via Google OAuth: {}", user_info.email);
+            eprintln!("Creating new verified user via Google OAuth: {}", user_info.email);
             app_state.db_client.create_oauth_user(
                 user_info.name,
                 user_info.email,
@@ -375,6 +387,7 @@ pub async fn google_callback(
 
     // FIX: Redirect to the correct frontend callback route
     let redirect_url = format!("{}/auth/callback?token={}", &app_state.env.app_url, token);
+    eprintln!("🔄 Redirecting to frontend: {}", redirect_url);
 
     Ok((jar, Redirect::to(&redirect_url)))
 }
