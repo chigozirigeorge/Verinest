@@ -9,7 +9,7 @@ use crate::{
         subscriptiondb::SubscriptionExt,
     },
     models::{
-        subscriptionmodels::{UserSubscription, SubscriptionTier, SubscriptionStatus},
+        subscriptionmodels::{UserSubscription, SubscriptionTier},
         walletmodels::TransactionStatus,
     },
     error::HttpError, 

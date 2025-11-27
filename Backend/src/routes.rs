@@ -153,11 +153,12 @@ let protected_labour_routes = Router::new()
         .nest("/notifications", notification_routes)
         .nest("/admin", cache_routes)  
         .nest("/debug", Router::new().route("/reco/push", post(crate::handler::debug::push_reco_event)))
-    .layer(TraceLayer::new_for_http())
-    .layer(middleware::from_fn(crate::middleware::main_middleware::cache_and_rate_limit))
-    .layer(Extension(app_state));
+        .layer(Extension(app_state.clone()))  // Move Extension layer BEFORE middleware
+        .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(crate::middleware::main_middleware::cache_and_rate_limit));
 
     Router::new()
         .route("/health", get(health_check))
         .nest("/api", api_route)
+        .layer(Extension(app_state))  // Add Extension layer to main router too
 }

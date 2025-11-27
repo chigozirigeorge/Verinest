@@ -7,6 +7,7 @@ use chrono::{Utc, Duration};
 use redis::aio::ConnectionManager;
 use validator::Validate;
 use uuid::Uuid;
+use regex;
 
 use crate::{
     AppState, db::userdb::UserExt, dtos::userdtos::{
@@ -20,7 +21,7 @@ pub fn auth_handler() -> Router {
         .route("/register", post(register))
         .route("/login", post(login))
         .route("/verify", get(verify_email))
-        // .route("/check-email", get(check_email_availability))
+        .route("/check-username", get(check_username_availability))
         .route("/resend-verification", post(resend_verification_email))
         .route("/forgot-password", post(forgot_password))
         .route("/reset-password", post(reset_password))
@@ -423,4 +424,53 @@ pub async fn logout(
     };
 
     Ok(Json(response))
+}
+
+pub async fn check_username_availability(
+    Extension(app_state): Extension<Arc<AppState>>,
+    Query(query_params): Query<CheckUsernameQuery>
+) -> Result<impl IntoResponse, HttpError> {
+
+    let username = query_params.username.trim().to_lowercase();
+
+    if username.len() < 3 {
+        return Ok(Json(UsernameCheckResponse {
+            available: false,
+            message: "Username must be at least 3 characters long".to_string(),
+        }));
+    }
+
+    if username.len() > 30 {
+        return Ok(Json(UsernameCheckResponse {
+            available: false,
+            message: "Username must not exceed 30 characters".to_string(),
+        }));
+    }
+    
+    // Check if username contains only valid characters
+    let valid_username = regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
+    if !valid_username.is_match(&username) {
+        return Ok(Json(UsernameCheckResponse {
+            available: false,
+            message: "Username can only contain letters, numbers, underscores and hyphens".to_string(),
+        }));
+    }
+
+     // Check database for existing username
+    let existing_user = app_state.db_client
+        .get_user(None, Some(&username), None, None)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+    
+    if existing_user.is_some() {
+        return Ok(Json(UsernameCheckResponse {
+            available: false,
+            message: "Username is already taken".to_string(),
+        }));
+    }
+    
+    Ok(Json(UsernameCheckResponse {
+        available: true,
+        message: "Username is available".to_string(),
+    }))
 }

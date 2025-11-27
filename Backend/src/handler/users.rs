@@ -44,7 +44,6 @@ pub fn users_handler() -> Router {
             role_check(state, req, next, vec![UserRole::User, UserRole::Admin])
         }))
     )
-    .route("/check-username", get(check_username_availability))
      .route("/avatar", put(update_user_avatar))
     .route("/name", put(update_user_name))
     .route("/profile", put(update_user_profile))
@@ -1065,55 +1064,6 @@ pub async fn get_subscription_status(
             }
         }
     })))
-}
-
-pub async fn check_username_availability(
-    Extension(app_state): Extension<Arc<AppState>>,
-    Query(query_params): Query<CheckUsernameQuery>
-) -> Result<impl IntoResponse, HttpError> {
-
-    let username = query_params.username.trim().to_lowercase();
-
-    if username.len() < 3 {
-        return Ok(Json(UsernameCheckResponse {
-            available: false,
-            message: "Username must be at least 3 characters long".to_string(),
-        }));
-    }
-
-    if username.len() > 30 {
-        return Ok(Json(UsernameCheckResponse {
-            available: false,
-            message: "Username must not exceed 30 characters".to_string(),
-        }));
-    }
-    
-    // Check if username contains only valid characters
-    let valid_username = regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
-    if !valid_username.is_match(&username) {
-        return Ok(Json(UsernameCheckResponse {
-            available: false,
-            message: "Username can only contain letters, numbers, underscores and hyphens".to_string(),
-        }));
-    }
-
-     // Check database for existing username
-    let existing_user = app_state.db_client
-        .get_user(None, Some(&username), None, None)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
-    
-    if existing_user.is_some() {
-        return Ok(Json(UsernameCheckResponse {
-            available: false,
-            message: "Username is already taken".to_string(),
-        }));
-    }
-    
-    Ok(Json(UsernameCheckResponse {
-        available: true,
-        message: "Username is available".to_string(),
-    }))
 }
 
 pub async fn update_user_profile(

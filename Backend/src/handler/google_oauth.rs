@@ -293,10 +293,10 @@ pub async fn test_jwt_state() -> Result<impl IntoResponse, HttpError> {
 
 // Simple test endpoint to verify basic functionality
 pub async fn test_simple() -> Result<impl IntoResponse, HttpError> {
-    eprintln!("🧪 Simple test endpoint called");
+    eprintln!("🧪 Simple test endpoint called - VERSION 2.0");
     Ok(Json(serde_json::json!({
         "status": "success",
-        "message": "OAuth handler is working",
+        "message": "OAuth handler is working - NEW VERSION",
         "timestamp": chrono::Utc::now().to_rfc3339()
     })))
 }
@@ -340,6 +340,7 @@ pub async fn google_callback(
 ) -> Result<impl IntoResponse, HttpError> {
     eprintln!("=== GOOGLE CALLBACK STARTED ===");
     eprintln!("🔍 Query params: state={:?}, code={:?}", query.state, query.code);
+    eprintln!("🚀 NEW CODE IS RUNNING - VERSION 2.0");
     
     eprintln!("🔄 About to initialize GoogleAuthService...");
     let google_auth = GoogleAuthService::new()
@@ -349,6 +350,7 @@ pub async fn google_callback(
         })?;
     eprintln!("✅ GoogleAuthService initialized successfully");
 
+    eprintln!("🚀 ABOUT TO SKIP STATE VALIDATION - NEW CODE");
     eprintln!("⚠️  SKIPPING STATE VALIDATION FOR TESTING");
     
     eprintln!("🔄 About to exchange code for tokens...");
