@@ -70,7 +70,7 @@ jobs:
             
             # Move new binary to final location
             echo "🚀 Deploying new binary..."
-            sudo mv /tmp/verinest-binary/release/verinest /opt/verinest-backend/verinest
+            sudo mv /tmp/verinest-binary/verinest /opt/verinest-backend/verinest
             
             # Make sure it's executable
             sudo chmod +x /opt/verinest-backend/verinest

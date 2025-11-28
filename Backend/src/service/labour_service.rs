@@ -387,7 +387,7 @@ pub async fn assign_worker_to_job(
 
         // Audit log
         self.audit_service.log_progress_submission(
-            worker_profile.id,
+            worker_user_id,  // Use user_id, not worker_profile.id
             &progress,
             payment_release.as_ref(),
         ).await?;
