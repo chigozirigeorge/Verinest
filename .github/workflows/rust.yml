@@ -11,9 +11,15 @@ jobs:
     steps:
       # 1️⃣ Checkout code
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # Updated to v4
 
-      # 2️⃣ Install Rust
+      # 2️⃣ Install system dependencies
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev libpq-dev
+
+      # 3️⃣ Install Rust
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -21,13 +27,20 @@ jobs:
           profile: minimal
           override: true
 
-      # 3️⃣ Build release
+      # 4️⃣ Cache cargo registry
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      # 5️⃣ Build release
       - name: Build release
         working-directory: ./Backend
         run: cargo build --release
 
-      # 4️⃣ Copy binary to EC2
-      - name: Upload binary to EC2
+      # 6️⃣ Copy binary to temp directory first
+      - name: Upload binary to EC2 (temp)
         uses: appleboy/scp-action@v0.1.5
         with:
           host: ${{ secrets.EC2_HOST }}         
@@ -35,15 +48,34 @@ jobs:
           key: ${{ secrets.EC2_KEY }}            
           port: 22
           source: Backend/target/release/verinest
-          target: /opt/verinest-backend/
+          target: /tmp/verinest
 
-      # 5️⃣ Restart backend via systemd
-      - name: Restart Rust backend
+      # 7️⃣ Move binary and restart service
+      - name: Deploy and restart
         uses: appleboy/ssh-action@v0.1.6
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_KEY }}
           script: |
-            sudo systemctl daemon-reload
+            # Move binary with sudo
+            sudo mv /tmp/verinest /opt/verinest-backend/verinest
+            
+            # Make sure it's executable
+            sudo chmod +x /opt/verinest-backend/verinest
+            
+            # Restart service
             sudo systemctl restart verinest-backend
+            
+            # Wait a moment and check status
+            sleep 5
+            sudo systemctl status verinest-backend --no-pager
+            
+            # Check if service is running
+            if sudo systemctl is-active --quiet verinest-backend; then
+              echo "✅ Service restarted successfully"
+            else
+              echo "❌ Service failed to restart"
+              sudo journalctl -u verinest-backend --no-pager -n 20
+              exit 1
+            fi
