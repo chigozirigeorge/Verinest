@@ -2,90 +2,65 @@ name: Deploy Backend
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ec2-backend
 
     steps:
-      # 1️⃣ Checkout code
-      - name: Checkout repository
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      # 2️⃣ Install system dependencies
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev libpq-dev
-
-      # 3️⃣ Install Rust toolchain
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
-      # 4️⃣ Cache cargo registry
-      - name: Cache cargo registry
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      # 5️⃣ Build backend in release mode
-      - name: Build release
-        working-directory: ./Backend
+      - name: Build release binary
         run: cargo build --release
 
-      # 6️⃣ Upload ONLY the binary to EC2
-      - name: Upload server binary to EC2
+      # Upload file using a SAFE, FILE-ONLY method
+      - name: Upload backend binary (FILE SAFE MODE)
         uses: appleboy/scp-action@v0.1.5
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_KEY }}
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
           port: 22
 
-          # Upload the binary file only (not a directory)
-          source: Backend/target/release/verinest
+          # Choose binary explicitly with full path — cannot be confused for a directory
+          source: "target/release/verinest"
+          target: "/tmp/"
 
-          # Upload to /tmp/ (NOT /tmp/verinest — avoids directory issues)
-          target: /tmp/
+          strip_components: 0
+          overwrite: true
+          rm: false
 
-      # 7️⃣ Move binary, set permissions, restart systemd service
-      - name: Deploy & restart backend service
+      - name: Deploy on server
         uses: appleboy/ssh-action@v0.1.6
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_KEY }}
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
           script: |
-            echo "▶️ Deploying new backend binary..."
+            echo "▶️ Deploying backend"
 
-            # Move binary into place
+            # Final safety: ensure the uploaded object is a file
+            if [ ! -f "/tmp/verinest" ]; then
+              echo "❌ ERROR: Uploaded artifact is not a file"
+              exit 1
+            fi
+
             sudo mv /tmp/verinest /opt/verinest-backend/verinest
-
-            # Ensure executable permissions
             sudo chmod +x /opt/verinest-backend/verinest
 
-            # Restart the service
             sudo systemctl restart verinest-backend
+            sleep 2
 
-            # Wait a bit
-            sleep 5
-
-            # Show status
-            sudo systemctl status verinest-backend --no-pager
-
-            # Verify healthy restart
             if sudo systemctl is-active --quiet verinest-backend; then
-              echo "✅ Service restarted successfully"
+              echo "✅ Backend deployed successfully"
             else
-              echo "❌ Service failed to restart"
-              sudo journalctl -u verinest-backend --no-pager -n 30
+              echo "❌ Backend failed to restart"
+              sudo journalctl -u verinest-backend -n 50 --no-pager
               exit 1
             fi
