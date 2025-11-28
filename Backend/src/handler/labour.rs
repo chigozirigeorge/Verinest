@@ -773,13 +773,8 @@ pub async fn submit_job_progress(
         return Err(HttpError::unauthorized("Only Workers are allowed to submit job progress"));
     }
         
-    let worker_profile = app_state.db_client
-        .get_worker_profile(auth.user.id)
-        .await
-        .map_err(|e| HttpError::server_error(e.to_string()))?;
-
     let result = app_state.labour_service
-        .submit_job_progress(job_id, worker_profile.id, body)
+        .submit_job_progress(job_id, auth.user.id, body)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 

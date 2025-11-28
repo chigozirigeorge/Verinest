@@ -333,26 +333,28 @@ pub async fn assign_worker_to_job(
     pub async fn submit_job_progress(
         &self,
         job_id: Uuid,
-        worker_id: Uuid,
+        worker_user_id: Uuid,
         progress_data: SubmitProgressDto,
     ) -> Result<ProgressSubmissionResult, ServiceError> {
         let tx = self.db_client.pool.begin().await?;
+
+        // Get worker profile from user ID
+        let worker_profile = self.db_client.get_worker_profile(worker_user_id)
+            .await?;
 
         // Verify job and worker assignment
         let job = self.db_client.get_job_by_id(job_id)
             .await?
             .ok_or(ServiceError::JobNotFound(job_id))?;
 
-        // let worker_profile = self.db_client.get_worker_profile(worker_id).await?;
-
-        if job.assigned_worker_id != Some(worker_id) {
-            return Err(ServiceError::UnauthorizedJobAccess(worker_id, job_id));
+        if job.assigned_worker_id != Some(worker_profile.id) {
+            return Err(ServiceError::UnauthorizedJobAccess(worker_profile.id, job_id));
         }
 
         // Submit progress
         let progress = self.db_client.submit_job_progress(
             job_id,
-            worker_id,
+            worker_profile.id,
             progress_data.progress_percentage,
             progress_data.description,
             progress_data.image_urls,
@@ -385,7 +387,7 @@ pub async fn assign_worker_to_job(
 
         // Audit log
         self.audit_service.log_progress_submission(
-            worker_id,
+            worker_profile.id,
             &progress,
             payment_release.as_ref(),
         ).await?;
