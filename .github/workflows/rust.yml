@@ -1,3 +1,5 @@
+name: Deploy Backend
+
 on:
   push:
     branches:
@@ -11,7 +13,7 @@ jobs:
     steps:
       # 1️⃣ Checkout code
       - name: Checkout repository
-        uses: actions/checkout@v4  # Updated to v4
+        uses: actions/checkout@v4
 
       # 2️⃣ Install system dependencies
       - name: Install system dependencies
@@ -19,7 +21,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev libpq-dev
 
-      # 3️⃣ Install Rust
+      # 3️⃣ Install Rust toolchain
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -34,48 +36,56 @@ jobs:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
-      # 5️⃣ Build release
+      # 5️⃣ Build backend in release mode
       - name: Build release
         working-directory: ./Backend
         run: cargo build --release
 
-      # 6️⃣ Copy binary to temp directory first
-      - name: Upload binary to EC2 (temp)
+      # 6️⃣ Upload ONLY the binary to EC2
+      - name: Upload server binary to EC2
         uses: appleboy/scp-action@v0.1.5
         with:
-          host: ${{ secrets.EC2_HOST }}         
+          host: ${{ secrets.EC2_HOST }}
           username: ubuntu
-          key: ${{ secrets.EC2_KEY }}            
+          key: ${{ secrets.EC2_KEY }}
           port: 22
-          source: Backend/target/release/verinest
-          target: /tmp/verinest
 
-      # 7️⃣ Move binary and restart service
-      - name: Deploy and restart
+          # Upload the binary file only (not a directory)
+          source: Backend/target/release/verinest
+
+          # Upload to /tmp/ (NOT /tmp/verinest — avoids directory issues)
+          target: /tmp/
+
+      # 7️⃣ Move binary, set permissions, restart systemd service
+      - name: Deploy & restart backend service
         uses: appleboy/ssh-action@v0.1.6
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_KEY }}
           script: |
-            # Move binary with sudo
+            echo "▶️ Deploying new backend binary..."
+
+            # Move binary into place
             sudo mv /tmp/verinest /opt/verinest-backend/verinest
-            
-            # Make sure it's executable
+
+            # Ensure executable permissions
             sudo chmod +x /opt/verinest-backend/verinest
-            
-            # Restart service
+
+            # Restart the service
             sudo systemctl restart verinest-backend
-            
-            # Wait a moment and check status
+
+            # Wait a bit
             sleep 5
+
+            # Show status
             sudo systemctl status verinest-backend --no-pager
-            
-            # Check if service is running
+
+            # Verify healthy restart
             if sudo systemctl is-active --quiet verinest-backend; then
               echo "✅ Service restarted successfully"
             else
               echo "❌ Service failed to restart"
-              sudo journalctl -u verinest-backend --no-pager -n 20
+              sudo journalctl -u verinest-backend --no-pager -n 30
               exit 1
             fi
