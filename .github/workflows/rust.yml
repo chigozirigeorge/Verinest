@@ -49,7 +49,7 @@ jobs:
           port: 22
           source: Backend/target/release/verinest
           target: /tmp/verinest-binary
-          strip_components: 2  # Remove Backend/target/release/ prefix
+          strip_components: 3  # Remove Backend/target/release/ prefix
 
       # 7️⃣ Move binary and restart service
       - name: Deploy and restart
@@ -70,7 +70,7 @@ jobs:
             
             # Move new binary to final location
             echo "🚀 Deploying new binary..."
-            sudo mv /tmp/verinest-binary /opt/verinest-backend/verinest
+            sudo mv /tmp/verinest-binary/release/verinest /opt/verinest-backend/verinest
             
             # Make sure it's executable
             sudo chmod +x /opt/verinest-backend/verinest
