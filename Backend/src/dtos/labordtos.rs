@@ -386,8 +386,14 @@ pub struct EmployerDashBoardDto {
 //Search and Filter DTos
 #[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct SearchWorkersDto {
+    /// Optional worker category filter. If specified, filters workers by this category.
+    /// If not specified, shows all categories in the specified state.
     pub category: Option<WorkerCategory>,
+    
+    /// Required state for location-based search. Workers will be filtered by this state.
+    /// If not specified, no results will be returned (state is required).
     pub location_state: Option<String>,
+    
     pub location_city: Option<String>,
     pub min_rating: Option<f32>,
     pub max_hourly_rate: Option<f64>,

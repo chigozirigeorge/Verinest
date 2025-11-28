@@ -343,9 +343,9 @@ pub async fn assign_worker_to_job(
             .await?
             .ok_or(ServiceError::JobNotFound(job_id))?;
 
-        let worker_profile = self.db_client.get_worker_profile(worker_id).await?;
+        // let worker_profile = self.db_client.get_worker_profile(worker_id).await?;
 
-        if job.assigned_worker_id != Some(worker_profile.id) {
+        if job.assigned_worker_id != Some(worker_id) {
             return Err(ServiceError::UnauthorizedJobAccess(worker_id, job_id));
         }
 

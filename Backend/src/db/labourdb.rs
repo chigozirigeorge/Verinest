@@ -48,6 +48,13 @@ pub trait LaborExt {
         offset: i64,
     ) -> Result<Vec<WorkerProfile>, Error>;
 
+    async fn get_workers_by_state_only(
+        &self,
+        state: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<WorkerProfile>, Error>;
+
     //Portfolio management
     async fn add_portfolio_item(
         &self,
@@ -520,6 +527,29 @@ impl LaborExt for DBClient {
         )
         .bind(state)
         .bind(category)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    async fn get_workers_by_state_only(
+        &self,
+        state: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<WorkerProfile>, Error> {
+        sqlx::query_as::<_, WorkerProfile>(
+            r#"
+            SELECT id, user_id, category, experience_years, description, hourly_rate, 
+            daily_rate, location_state, location_city, is_available, rating, completed_jobs::BIGINT as completed_jobs, created_at, updated_at
+            FROM worker_profiles
+            WHERE location_state = $1 AND is_available = true
+            ORDER BY rating DESC, completed_jobs::BIGINT DESC
+            LIMIT $2 OFFSET $3
+            "#
+        )
+        .bind(state)
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)

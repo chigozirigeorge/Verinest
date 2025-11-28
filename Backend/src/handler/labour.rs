@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, Query}, http::StatusCode, response::IntoResponse, routing::{delete, get, post, put}, Extension, Json, Router
 };
-use crate::recommendation_models::{Interaction, FeedItemType, InteractionType};
+use crate::{models::usermodel::UserRole, recommendation_models::{FeedItemType, Interaction, InteractionType}};
 use crate::services::reco_db::RecoDB;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
@@ -769,8 +769,17 @@ pub async fn submit_job_progress(
     body.validate()
         .map_err(|e| HttpError::bad_request(e.to_string()))?;
 
+    if auth.user.role != UserRole::Worker {
+        return Err(HttpError::unauthorized("Only Workers are allowed to submit job progress"));
+    }
+        
+    let worker_profile = app_state.db_client
+        .get_worker_profile(auth.user.id)
+        .await
+        .map_err(|e| HttpError::server_error(e.to_string()))?;
+
     let result = app_state.labour_service
-        .submit_job_progress(job_id, auth.user.id, body)
+        .submit_job_progress(job_id, worker_profile.id, body)
         .await
         .map_err(|e| HttpError::server_error(e.to_string()))?;
 
@@ -1113,18 +1122,34 @@ pub async fn search_workers(
     let limit = params.limit.unwrap_or(20);
     let offset = ((page - 1) * limit) as i64;
 
-    let workers = if let (Some(state), Some(category)) = (&params.location_state, params.category) {
-        app_state.db_client
-            .get_workers_by_location_and_category(
-                state,
-                category,
-                limit as i64,
-                offset,
-            )
-            .await
-            .map_err(|e| HttpError::server_error(e.to_string()))?
-    } else {
-        vec![]
+    let workers = match (&params.location_state, params.category) {
+        (Some(state), Some(category)) => {
+            // Search by state AND category
+            app_state.db_client
+                .get_workers_by_location_and_category(
+                    state,
+                    category,
+                    limit as i64,
+                    offset,
+                )
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?
+        }
+        (Some(state), None) => {
+            // Search by state ONLY (all categories)
+            app_state.db_client
+                .get_workers_by_state_only(
+                    state,
+                    limit as i64,
+                    offset,
+                )
+                .await
+                .map_err(|e| HttpError::server_error(e.to_string()))?
+        }
+        (None, _) => {
+            // No state specified - return empty (require state for search)
+            vec![]
+        }
     };
 
     // Convert to response objects with additional data
