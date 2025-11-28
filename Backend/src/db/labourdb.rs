@@ -262,6 +262,33 @@ async fn assign_worker_to_job(
         verifier_id: Uuid,
     ) -> Result<Vec<Dispute>, Error>;
 
+    // High-value dispute verification methods
+    async fn get_admin_verification_for_dispute(
+        &self,
+        dispute_id: Uuid,
+    ) -> Result<Option<AdminDisputeVerification>, Error>;
+
+    async fn create_pending_dispute_resolution(
+        &self,
+        dispute_id: Uuid,
+        verifier_id: Uuid,
+        resolution: String,
+        decision: String,
+        payment_percentage: Option<f64>,
+    ) -> Result<PendingDisputeResolution, Error>;
+
+    async fn assign_admin_to_dispute_verification(
+        &self,
+        dispute_id: Uuid,
+        admin_id: Uuid,
+    ) -> Result<(), Error>;
+
+    async fn update_dispute_status(
+        &self,
+        dispute_id: Uuid,
+        status: DisputeStatus,
+    ) -> Result<Dispute, Error>;
+
     //Review Sysytem
     async fn create_job_review(
         &self,
@@ -1823,5 +1850,96 @@ async fn get_escrow_transaction(
         }
         
         query.fetch_one(&self.pool).await
+    }
+
+    // High-value dispute verification implementations
+    async fn get_admin_verification_for_dispute(
+        &self,
+        dispute_id: Uuid,
+    ) -> Result<Option<AdminDisputeVerification>, Error> {
+        sqlx::query_as::<_, AdminDisputeVerification>(
+            r#"
+            SELECT id, dispute_id, admin_id, verifier_resolution_id, admin_decision, 
+                   admin_notes, status, created_at, verified_at
+            FROM admin_dispute_verifications 
+            WHERE dispute_id = $1 AND status = 'approved'
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#
+        )
+        .bind(dispute_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    async fn create_pending_dispute_resolution(
+        &self,
+        dispute_id: Uuid,
+        verifier_id: Uuid,
+        resolution: String,
+        decision: String,
+        payment_percentage: Option<f64>,
+    ) -> Result<PendingDisputeResolution, Error> {
+        sqlx::query_as::<_, PendingDisputeResolution>(
+            r#"
+            INSERT INTO pending_dispute_resolutions 
+            (dispute_id, verifier_id, resolution, decision, payment_percentage, status)
+            VALUES ($1, $2, $3, $4, $5, 'pending_admin_verification')
+            RETURNING id, dispute_id, verifier_id, resolution, decision, payment_percentage, 
+                      status, created_at, admin_verified_at
+            "#
+        )
+        .bind(dispute_id)
+        .bind(verifier_id)
+        .bind(resolution)
+        .bind(decision)
+        .bind(payment_percentage)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    async fn assign_admin_to_dispute_verification(
+        &self,
+        dispute_id: Uuid,
+        admin_id: Uuid,
+    ) -> Result<(), Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO admin_dispute_verifications 
+            (dispute_id, admin_id, status)
+            VALUES ($1, $2, 'pending_review')
+            ON CONFLICT (dispute_id) DO UPDATE SET
+                admin_id = EXCLUDED.admin_id,
+                status = EXCLUDED.status,
+                created_at = NOW()
+            "#
+        )
+        .bind(dispute_id)
+        .bind(admin_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn update_dispute_status(
+        &self,
+        dispute_id: Uuid,
+        status: DisputeStatus,
+    ) -> Result<Dispute, Error> {
+        sqlx::query_as::<_, Dispute>(
+            r#"
+            UPDATE disputes 
+            SET status = $2, updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, job_id, raised_by, against, reason, description, 
+                   evidence_urls, status, assigned_verifier, 
+                   resolution, created_at, resolved_at
+            "#
+        )
+        .bind(dispute_id)
+        .bind(status)
+        .fetch_one(&self.pool)
+        .await
     }
 }

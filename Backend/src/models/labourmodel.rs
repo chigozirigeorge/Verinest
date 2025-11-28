@@ -538,6 +538,32 @@ pub struct VerificationTask {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AdminDisputeVerification {
+    pub id: Uuid,
+    pub dispute_id: Uuid,
+    pub admin_id: Uuid,
+    pub verifier_resolution_id: Uuid,
+    pub admin_decision: String,
+    pub admin_notes: Option<String>,
+    pub status: String,
+    pub created_at: Option<DateTime<Utc>>,
+    pub verified_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PendingDisputeResolution {
+    pub id: Uuid,
+    pub dispute_id: Uuid,
+    pub verifier_id: Uuid,
+    pub resolution: String,
+    pub decision: String,
+    pub payment_percentage: Option<f64>,
+    pub status: String,
+    pub created_at: Option<DateTime<Utc>>,
+    pub admin_verified_at: Option<DateTime<Utc>>,
+}
+
 // Add these helper functions to handle Option enums safely
 pub trait SafeEnumConversion {
     fn safe_unwrap(&self) -> String;

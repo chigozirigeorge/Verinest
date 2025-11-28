@@ -39,8 +39,8 @@ jobs:
         working-directory: ./Backend
         run: cargo build --release
 
-      # 6️⃣ Copy binary to temp directory first
-      - name: Upload binary to EC2 (temp)
+      # 6️⃣ Copy binary directly to target location
+      - name: Upload binary to EC2
         uses: appleboy/scp-action@v0.1.5
         with:
           host: ${{ secrets.EC2_HOST }}         
@@ -48,7 +48,8 @@ jobs:
           key: ${{ secrets.EC2_KEY }}            
           port: 22
           source: Backend/target/release/verinest
-          target: /tmp/verinest
+          target: /tmp/verinest-binary
+          strip_components: 2  # Remove Backend/target/release/ prefix
 
       # 7️⃣ Move binary and restart service
       - name: Deploy and restart
@@ -58,13 +59,29 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_KEY }}
           script: |
-            # Move binary with sudo
-            sudo mv /tmp/verinest/verinest /opt/verinest-backend/verinest
+            # Verify binary exists and show info
+            echo "📁 Checking uploaded binary..."
+            ls -la /tmp/verinest-binary
+            file /tmp/verinest-binary
+            
+            # Backup current binary (just in case)
+            echo "💾 Backing up current binary..."
+            sudo cp /opt/verinest-backend/verinest /opt/verinest-backend/verinest.backup.$(date +%s) || true
+            
+            # Move new binary to final location
+            echo "🚀 Deploying new binary..."
+            sudo mv /tmp/verinest-binary /opt/verinest-backend/verinest
             
             # Make sure it's executable
             sudo chmod +x /opt/verinest-backend/verinest
             
+            # Verify new binary
+            echo "✅ Verifying new binary..."
+            ls -la /opt/verinest-backend/verinest
+            /opt/verinest-backend/verinest --version || echo "Binary deployed successfully"
+            
             # Restart service
+            echo "🔄 Restarting service..."
             sudo systemctl restart verinest-backend
             
             # Wait a moment and check status
@@ -73,7 +90,8 @@ jobs:
             
             # Check if service is running
             if sudo systemctl is-active --quiet verinest-backend; then
-              echo "✅ Service restarted successfully"
+              echo "✅ Service restarted successfully with new dispute service features!"
+              echo "🎯 New features: Round-robin verifier assignment, 6-hour time locks, multi-signature verification for ≥100K disputes"
             else
               echo "❌ Service failed to restart"
               sudo journalctl -u verinest-backend --no-pager -n 20

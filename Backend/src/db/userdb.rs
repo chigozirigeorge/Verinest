@@ -364,7 +364,7 @@ impl UserExt for DBClient {
             AND id NOT IN (
                 SELECT assigned_verifier 
                 FROM disputes 
-                WHERE status = 'open' AND assigned_verifier IS NOT NULL
+                WHERE status = 'under_review'::dispute_status AND assigned_verifier IS NOT NULL
             )
             "#
         )
