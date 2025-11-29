@@ -1472,7 +1472,7 @@ impl UserExt for DBClient {
                     referral_code, referral_count, google_id, avatar_url,
                     wallet_address, phone_number, verification_status,
                     nin_number, verification_document_id, facial_verification_id, nearest_landmark,
-                    verification_number, nationality, dob, lga, transaction_pin, next_of_kin,
+                    verification_number, nationality, dob, lga, transaction_pin, transaction_pin_hash, next_of_kin,
                     verification_token, token_expires_at,
                     subscription_tier, role_change_count, role_change_reset_at,
                     created_at,
